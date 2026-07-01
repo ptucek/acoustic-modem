@@ -1,0 +1,9 @@
+build/
+*.wav
+.cache/
+compile_commands.json
+imgui.ini
+# volatilní koordinační soubory dvou agentů — historie do gitu nepatří
+sync/inbox-*.md
+sync/status-*.md
+sync/results/
