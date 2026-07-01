@@ -92,6 +92,39 @@ TEST_CASE("dva rámce těsně za sebou se dekódují oba") {
     CHECK(r2->crc_ok);
 }
 
+TEST_CASE("přerušená preambule + celý rámec v JEDINÉM pushi (repro z macu)") {
+    // Regresní test nálezu z review: po selhání SYNC se hledání musí
+    // vrátit k začátku falešného locku, jinak přeskočí pravý chirp,
+    // který dorazil během spolykaných symbolů. S jedním obřím pushem
+    // nepomůže ani preempční scan (běží jen jednou na push).
+    const am::ModemConfig cfg;
+    const am::PreambleSpec pre;
+
+    // vysílač „umlkl" po preambuli: warm-up + chirp + mezera, žádná data
+    std::vector<float> tx;
+    {
+        const std::vector<uint8_t> dummy = {1};
+        auto full = buildTx(dummy, cfg);
+        const size_t preamble_len =
+            size_t((pre.warmup_s + pre.chirp_s + pre.gap_s) * cfg.sample_rate);
+        tx.assign(full.begin(), full.begin() + long(preamble_len));
+    }
+    // 50 ms ticha
+    tx.insert(tx.end(), size_t(0.05 * cfg.sample_rate), 0.f);
+    // následuje kompletní validní rámec
+    const std::vector<uint8_t> payload = {'r', 'e', 'p', 'r', 'o'};
+    auto frame = buildTx(payload, cfg);
+    tx.insert(tx.end(), frame.begin(), frame.end());
+
+    am::FrameReceiver rx;
+    rx.configure(cfg, fsk());
+    rx.pushSamples(tx); // vše NAJEDNOU — dřív selhávalo
+    auto r = rx.poll();
+    REQUIRE(r.has_value());
+    CHECK(r->crc_ok);
+    CHECK(r->payload == payload);
+}
+
 TEST_CASE("šum bez signálu nevydá žádný rámec") {
     const am::ModemConfig cfg;
     std::vector<float> silence(size_t(3 * cfg.sample_rate), 0.f);

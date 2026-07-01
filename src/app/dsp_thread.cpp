@@ -23,12 +23,25 @@ void pushCapped(std::vector<T>& v, T value) {
 }
 } // namespace
 
-DspThread::DspThread() = default;
+DspThread::DspThread() : epoch_(std::chrono::steady_clock::now()) {}
 
 DspThread::~DspThread() { stop(); }
 
+double DspThread::nowSeconds() const {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                         epoch_)
+        .count();
+}
+
+void DspThread::drainRings() {
+    std::vector<float> sink(4096);
+    while (rx_ring_.pop(sink) > 0) {}
+    while (tx_ring_.pop(sink) > 0) {}
+}
+
 bool DspThread::start(const ModemConfig& cfg, int scheme_index) {
     stop();
+    drainRings(); // zbytky starého vysílání/příjmu nesmí přežít restart
     {
         std::lock_guard lock(mtx_);
         cfg_ = cfg;
@@ -58,6 +71,7 @@ void DspThread::reconfigure(const ModemConfig& cfg, int scheme_index) {
     cfg_ = cfg;
     scheme_index_ = scheme_index;
     reconfigure_pending_ = true;
+    tx_queue_.clear(); // rámce modulované starým schématem už nemají smysl
 }
 
 bool DspThread::restartAudio(int capture_index, int playback_index) {
@@ -80,16 +94,31 @@ void DspThread::sendText(const std::string& utf8) {
 void DspThread::sendBytes(std::vector<uint8_t> payload, uint8_t payload_type) {
     if (payload.size() > size_t(kMaxPayload))
         payload.resize(size_t(kMaxPayload));
-    std::lock_guard lock(mtx_);
-    enqueueFrameLocked(payload, payload_type);
+    buildAndEnqueue(payload, payload_type);
 }
 
-void DspThread::enqueueFrameLocked(std::span<const uint8_t> payload,
-                                   uint8_t payload_type) {
-    const auto& scheme = modemRegistry()[size_t(scheme_index_)];
-    auto mod = scheme.makeMod();
-    mod->configure(cfg_);
-    tx_queue_.push_back(Framer::buildFrame(payload, *mod, cfg_, payload_type));
+void DspThread::buildAndEnqueue(std::span<const uint8_t> payload,
+                                uint8_t payload_type) {
+    ModemConfig cfg;
+    const ModemScheme* scheme;
+    {
+        std::lock_guard lock(mtx_);
+        cfg = cfg_;
+        scheme = &modemRegistry()[size_t(scheme_index_)];
+    }
+    // modulace (potenciálně miliony vzorků) běží bez zámku — GUI se nezasekne
+    auto mod = scheme->makeMod();
+    mod->configure(cfg);
+    auto frame = Framer::buildFrame(payload, *mod, cfg, payload_type);
+
+    std::lock_guard lock(mtx_);
+    if (frame.size() > tx_ring_.capacity()) {
+        // částečný push by odvysílal uříznutý rámec → protistrana by
+        // dostala CRC FAIL bez vysvětlení; radši zahodit a započítat
+        ++stats_.tx_dropped;
+        return;
+    }
+    tx_queue_.push_back(std::move(frame));
 }
 
 void DspThread::setBerTestTx(bool on) {
@@ -133,9 +162,6 @@ ModemConfig DspThread::config() {
 }
 
 void DspThread::run() {
-    using clock = std::chrono::steady_clock;
-    const auto t0 = clock::now();
-
     FrameReceiver rx;
     {
         std::lock_guard lock(mtx_);
@@ -156,15 +182,16 @@ void DspThread::run() {
         }
 
         // 2) TX: je-li ring prázdný a čeká rámec, nasyp ho tam celý
+        bool want_prbs = false;
         {
             std::lock_guard lock(mtx_);
-            // testovací režim BER: udržuj frontu zásobenou PRBS rámci
-            if (ber_test_tx_ && tx_queue_.empty() && tx_ring_.sizeApprox() == 0)
-                enqueueFrameLocked(Prbs15().generate(kPrbsPayload),
-                                   kPayloadPrbs);
+            want_prbs =
+                ber_test_tx_ && tx_queue_.empty() && tx_ring_.sizeApprox() == 0;
             if (!tx_queue_.empty() && tx_ring_.sizeApprox() == 0) {
                 const auto& frame = tx_queue_.front();
                 tx_total_ = frame.size();
+                // kapacita ověřena při enqueue → push nemůže být částečný,
+                // ring je v tuto chvíli prázdný
                 tx_ring_.push(frame);
                 tx_queue_.pop_front();
             }
@@ -174,6 +201,9 @@ void DspThread::run() {
                     : 1.f - float(tx_ring_.sizeApprox()) / float(tx_total_);
             if (tx_ring_.sizeApprox() == 0 && tx_queue_.empty()) tx_total_ = 0;
         }
+        // testovací režim BER: doplň frontu PRBS rámcem (modulace mimo zámek)
+        if (want_prbs)
+            buildAndEnqueue(Prbs15().generate(kPrbsPayload), kPayloadPrbs);
 
         // 3) RX: zpracuj dostupné vzorky
         const size_t got = rx_ring_.pop(chunk);
@@ -187,8 +217,7 @@ void DspThread::run() {
                 ev.payload_type = r->payload_type;
                 ev.crc_ok = r->crc_ok;
                 ev.snr_db = r->mean_snr_db;
-                ev.t_received =
-                    std::chrono::duration<double>(clock::now() - t0).count();
+                ev.t_received = nowSeconds();
                 std::lock_guard lock(mtx_);
                 // FER + BER účetnictví
                 if (ev.crc_ok) ++stats_.frames_ok;
@@ -219,8 +248,7 @@ void DspThread::run() {
 
             // časová řada „kvality" (~4 vzorky/s): rozhodovací rezerva
             // demodulátoru během příjmu rámce, NAN = mezera (nic se nepřijímá)
-            const double now =
-                std::chrono::duration<double>(clock::now() - t0).count();
+            const double now = nowSeconds();
             if (now - last_qual_t >= 0.25) {
                 last_qual_t = now;
                 const bool receiving =

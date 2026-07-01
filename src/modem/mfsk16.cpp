@@ -18,12 +18,25 @@
 namespace am {
 namespace {
 
+// Protokol (SYNC 16 b, hlavička 40 b, bajtový payload) předpokládá, že
+// bitsPerSymbol dělí 8 — jinak se pole rámce nezarovnají na hranice
+// symbolů (nález z review: 8 tónů = 3 bity/symbol tiše rozbije hlavičku).
+// Povolené počty tónů jsou 2/4/16/256 (bps 1/2/4/8); jiné hodnoty se
+// srazí na nejbližší nižší povolenou.
+int sanitizeTones(int tones) {
+    if (tones >= 256) return 256;
+    if (tones >= 16) return 16;
+    if (tones >= 4) return 4;
+    return 2;
+}
+
 class Mfsk16Modulator final : public IModulator {
 public:
     void configure(const ModemConfig& c) override {
         cfg_ = c;
+        cfg_.mfsk_tones = sanitizeTones(c.mfsk_tones);
         bits_per_sym_ = 0;
-        for (int t = c.mfsk_tones; t > 1; t >>= 1) ++bits_per_sym_;
+        for (int t = cfg_.mfsk_tones; t > 1; t >>= 1) ++bits_per_sym_;
         reset();
     }
     int  bitsPerSymbol() const override { return bits_per_sym_; }
@@ -56,10 +69,11 @@ private:
 class Mfsk16Demodulator final : public IDemodulator {
 public:
     void configure(const ModemConfig& c) override {
+        const int tones = sanitizeTones(c.mfsk_tones);
         bits_per_sym_ = 0;
-        for (int t = c.mfsk_tones; t > 1; t >>= 1) ++bits_per_sym_;
+        for (int t = tones; t > 1; t >>= 1) ++bits_per_sym_;
         gs_.clear();
-        for (int k = 0; k < c.mfsk_tones; ++k)
+        for (int k = 0; k < tones; ++k)
             gs_.emplace_back(c.mfsk_base + k * c.mfsk_spacing, c.sample_rate,
                              c.samplesPerSymbol());
     }

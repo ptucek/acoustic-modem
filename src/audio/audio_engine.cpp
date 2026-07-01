@@ -130,6 +130,12 @@ bool AudioEngine::start(int capture_index, int playback_index, int sample_rate,
                          SpscRing<float>& rx_ring, SpscRing<float>& tx_ring) {
     stop(); // pro jistotu — bezpečné zavolat i na nespuštěném enginu
 
+    const bool want_capture = capture_index != kNoDevice;
+    const bool want_playback = playback_index != kNoDevice;
+    if (!want_capture && !want_playback) {
+        return false; // nemá smysl otevírat proud bez obou směrů
+    }
+
     if (!impl_->context_initialized) {
         if (ma_context_init(nullptr, 0, nullptr, &impl_->context) != MA_SUCCESS) {
             return false;
@@ -143,11 +149,25 @@ bool AudioEngine::start(int capture_index, int playback_index, int sample_rate,
         enumerate();
     }
 
-    impl_->rx_ring = &rx_ring;
-    impl_->tx_ring = &tx_ring;
+    // Index mimo rozsah je chyba volajícího (typicky --device z CLI) —
+    // dřív se tiše spadlo na výchozí zařízení, což vede k matoucímu chování
+    // (nahraje/přehraje se jiné zařízení, než uživatel čekal).
+    if (playback_index >= 0 && static_cast<size_t>(playback_index) >= impl_->playback_ids.size()) {
+        return false;
+    }
+    if (capture_index >= 0 && static_cast<size_t>(capture_index) >= impl_->capture_ids.size()) {
+        return false;
+    }
+
+    impl_->rx_ring = want_capture ? &rx_ring : nullptr;
+    impl_->tx_ring = want_playback ? &tx_ring : nullptr;
     impl_->input_peak.store(0.f, std::memory_order_relaxed);
 
-    ma_device_config config = ma_device_config_init(ma_device_type_duplex);
+    const ma_device_type dev_type = (want_capture && want_playback) ? ma_device_type_duplex
+                                     : want_playback                ? ma_device_type_playback
+                                                                     : ma_device_type_capture;
+
+    ma_device_config config = ma_device_config_init(dev_type);
     config.sampleRate = static_cast<ma_uint32>(sample_rate);
     config.capture.format   = ma_format_f32;
     config.capture.channels = 1;
@@ -156,10 +176,10 @@ bool AudioEngine::start(int capture_index, int playback_index, int sample_rate,
     config.dataCallback = &Impl::dataCallback;
     config.pUserData = impl_;
 
-    if (playback_index >= 0 && static_cast<size_t>(playback_index) < impl_->playback_ids.size()) {
+    if (want_playback && playback_index >= 0) {
         config.playback.pDeviceID = &impl_->playback_ids[static_cast<size_t>(playback_index)];
     }
-    if (capture_index >= 0 && static_cast<size_t>(capture_index) < impl_->capture_ids.size()) {
+    if (want_capture && capture_index >= 0) {
         config.capture.pDeviceID = &impl_->capture_ids[static_cast<size_t>(capture_index)];
     }
 

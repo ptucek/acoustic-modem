@@ -14,7 +14,12 @@ namespace am {
 
 BitBuffer Framer::buildBits(std::span<const uint8_t> payload, uint8_t payload_type,
                             int bits_per_symbol) {
+    // Kontrola i v Release (assert v NDEBUG zmizí): oversized payload by
+    // vyrobil rámec, který přijímač po celé odvysílané airtime tiše zahodí
+    // (len > kMaxPayload v hlavičce). Oříznout a assertnout v Debug.
     assert(payload.size() <= size_t(kMaxPayload));
+    if (payload.size() > size_t(kMaxPayload))
+        payload = payload.first(size_t(kMaxPayload));
 
     BitBuffer bits;
     // referenční symboly (samé jedničky) — viz komentář u kRefSymbols

@@ -31,10 +31,13 @@ konvencí: **každý soubor má právě jednoho pisatele**.
 Tělo zprávy…
 ```
 
-Příjemce po zpracování NEmaže — změní `stav: nová` na `stav: hotovo`
-(+ krátká odpověď pod zprávu, nebo plná odpověď do protisměrného inboxu).
-Je to jediná povolená výjimka z pravidla jednoho pisatele: příjemce smí
-editovat pouze řádek `stav:` a přidat blok `> odpověď:` pod zprávu.
+**Příjemce do cizího inboxu NIKDY nezapisuje** (ani stav, ani odpověď) —
+souběžný append odesílatele by editaci přepsal (Dropbox = last writer
+wins; ověřeno v praxi 2026-07-02, viz MSG 5). Potvrzení se dělá zprávou
+v opačném směru: `**ACK MSG <n>:** krátká odpověď…` (jako běžná zpráva
+nebo úvodní řádek další zprávy). Každý soubor má tedy PRÁVĚ jednoho
+pisatele, bez výjimek. Zpracované zprávy si příjemce eviduje sám (stačí
+poslední ACKnuté číslo ve vlastním status souboru).
 
 ## Zásady
 

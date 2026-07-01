@@ -31,7 +31,9 @@ std::vector<float> makeChirp(const PreambleSpec& pre, int sample_rate,
             2.0 * std::numbers::pi * (pre.chirp_f_start * t + 0.5 * k * t * t);
         // Hannova obálka: bez lupanců na krajích, čistší spektrum; šablona
         // v korelátoru je identická, takže tvar obálky detekci nevadí
-        const double env = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * i / (n - 1));
+        const double env =
+            n > 1 ? 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * i / (n - 1))
+                  : 1.0;
         out[size_t(i)] = float(amplitude * env * std::sin(phase));
     }
     return out;

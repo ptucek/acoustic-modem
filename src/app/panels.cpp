@@ -80,12 +80,21 @@ void pushRxEvent(UiState& ui, const RxFrameEvent& ev) {
         e.hex = toHex(ev.payload);
     }
 
+    // POZOR: RxFrameEvent nenese schéma/baud, kterým byl rámec skutečně
+    // demodulován — bereme aktuální konfiguraci UI v okamžiku příjmu jako
+    // nejlepší dostupný odhad a ukládáme ji do logu, aby propustnost šla
+    // dopočítat konzistentně i zpětně (viz RxLogEntry). Hodnota je proto
+    // označena jako orientační.
+    const int bits_per_symbol =
+        std::max(1, modemRegistry()[size_t(ui.scheme_index)].makeDemod()->bitsPerSymbol());
+    e.baud_at_receive = ui.cfg.baud;
+    e.bits_per_symbol_at_receive = bits_per_symbol;
+
     if (ev.crc_ok) {
         ++ui.stats.frames_ok;
-        const int bits_per_symbol = modemRegistry()[size_t(ui.scheme_index)].makeDemod()->bitsPerSymbol();
         const double payload_bits = double(ev.payload.size()) * 8.0;
         const double symbol_time = 1.0 / ui.cfg.baud;
-        const double airtime_s = (payload_bits / double(std::max(1, bits_per_symbol))) * symbol_time;
+        const double airtime_s = (payload_bits / double(bits_per_symbol)) * symbol_time;
         ui.stats.last_throughput_bps = airtime_s > 0.0 ? double(ev.payload.size()) / airtime_s : 0.0;
     } else {
         ++ui.stats.frames_fail;
@@ -219,15 +228,27 @@ void drawControlBar(UiState& ui) {
     ImGui::SameLine();
 
     ImGui::BeginGroup();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::DragFloat("f0 (Hz)", reinterpret_cast<float*>(&ui.cfg.f0), 1.0f, 500.0f, 4000.0f, "%.0f")) {
-        ui.cfg.f0 = std::clamp(ui.cfg.f0, 500.0, 4000.0);
-        changed = true;
-    }
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::DragFloat("f1 (Hz)", reinterpret_cast<float*>(&ui.cfg.f1), 1.0f, 500.0f, 4000.0f, "%.0f")) {
-        ui.cfg.f1 = std::clamp(ui.cfg.f1, 500.0, 4000.0);
-        changed = true;
+    // f0/f1 jsou double (ModemConfig) — DragFloat by type-punoval double jako
+    // float* (UB, widget efektivně nefunguje). DragScalar s
+    // ImGuiDataType_Double pracuje se skutečným typem, žádný cast není
+    // potřeba. Reconfigure spustíme, jen když se hodnota opravdu změnila
+    // (ne při každém volání, které DragScalar vrátí true).
+    {
+        constexpr double kFreqMin = 500.0, kFreqMax = 4000.0;
+        ImGui::SetNextItemWidth(200);
+        double f0_before = ui.cfg.f0;
+        if (ImGui::DragScalar("f0 (Hz)", ImGuiDataType_Double, &ui.cfg.f0, 1.0f,
+                               &kFreqMin, &kFreqMax, "%.0f")) {
+            ui.cfg.f0 = std::clamp(ui.cfg.f0, kFreqMin, kFreqMax);
+            if (ui.cfg.f0 != f0_before) changed = true;
+        }
+        ImGui::SetNextItemWidth(200);
+        double f1_before = ui.cfg.f1;
+        if (ImGui::DragScalar("f1 (Hz)", ImGuiDataType_Double, &ui.cfg.f1, 1.0f,
+                               &kFreqMin, &kFreqMax, "%.0f")) {
+            ui.cfg.f1 = std::clamp(ui.cfg.f1, kFreqMin, kFreqMax);
+            if (ui.cfg.f1 != f1_before) changed = true;
+        }
     }
     ImGui::SetNextItemWidth(200);
     {
@@ -290,15 +311,25 @@ void drawWaterfallPanel(UiState& ui) {
 
     if (ui.waterfall_rows > 0 && ui.waterfall_bins > 0 &&
         ImPlot::BeginPlot("##waterfall_plot", ImVec2(-1, -1), ImPlotFlags_NoLegend)) {
-        const double max_khz = ui.dsp.waterfall().maxHz() / 1000.0;
+        // maxHz() je nakonfigurovaný STROP zobrazení (display_max_hz), ale
+        // skutečná šířka dat je waterfall_bins binů široká sample_rate/fft_size
+        // Hz (fft_size je ve Waterfall pevně 1024) — díky zaokrouhlení počtu
+        // binů se skutečný rozsah od nakonfigurovaného stropu mírně liší.
+        // Použijeme skutečný rozsah, jinak markery f0/f1 i osa neodpovídají
+        // reálným pozicím binů v datech.
+        constexpr double kFftSize = 1024.0;
+        const double sample_rate = double(ui.dsp.config().sample_rate);
+        const double bin_hz = sample_rate / kFftSize;
+        const double actual_max_khz = double(ui.waterfall_bins) * bin_hz / 1000.0;
+
         ImPlot::SetupAxes("f (kHz)", "čas", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, max_khz, ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, actual_max_khz, ImPlotCond_Always);
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, double(ui.waterfall_rows), ImPlotCond_Always);
 
         ImPlot::PushColormap(ImPlotColormap_Viridis);
         ImPlot::PlotHeatmap("##heat", ui.waterfall_data.data(), ui.waterfall_rows,
                              ui.waterfall_bins, -90.0, -10.0, nullptr,
-                             ImPlotPoint(0, 0), ImPlotPoint(max_khz, double(ui.waterfall_rows)));
+                             ImPlotPoint(0, 0), ImPlotPoint(actual_max_khz, double(ui.waterfall_rows)));
         ImPlot::PopColormap();
 
         // Svislé čáry na f0 a f1 aktuální konfigurace (v kHz).
@@ -482,7 +513,14 @@ void drawStatsPanel(UiState& ui) {
 
     ImGui::Text("Rámce OK: %llu", static_cast<unsigned long long>(ui.stats.frames_ok));
     ImGui::Text("Rámce CRC FAIL: %llu", static_cast<unsigned long long>(ui.stats.frames_fail));
-    ImGui::Text("Efektivní propustnost posledního rámce: %.1f B/s", ui.stats.last_throughput_bps);
+    ImGui::Text("Efektivní propustnost posledního rámce (orientační): %.1f B/s",
+                ui.stats.last_throughput_bps);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Počítáno z baudu/schématu aktuálního v okamžiku příjmu "
+                           "v UI, ne z hodnot, kterými byl rámec skutečně vysílán.");
+    }
 
     ImGui::Separator();
     ImGui::TextDisabled("Živá chybovost (M6)");
@@ -517,6 +555,13 @@ void drawStatsPanel(UiState& ui) {
         ImGui::Text("FER: %.2f %%", fer);
     } else {
         ImGui::Text("FER: -- %%");
+    }
+
+    if (es.tx_dropped > 0) {
+        ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f),
+                            "Zahozeno rámců při vysílání: %llu — "
+                            "rámec delší než TX buffer — sniž payload/zvyš baud",
+                            static_cast<unsigned long long>(es.tx_dropped));
     }
 
     // Společné X rozmezí pro oba grafy chybovosti — posledních ~60 s.

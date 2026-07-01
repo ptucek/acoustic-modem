@@ -26,6 +26,7 @@
 
 #include "audio/audio_engine.hpp"
 #include "core/config.hpp"
+#include "core/prbs.hpp"
 #include "core/spsc_ring.hpp"
 #include "core/wav_io.hpp"
 #include "dsp/channel_sim.hpp"
@@ -96,13 +97,39 @@ public:
     std::optional<double> getDouble(const std::string& key) {
         auto v = get(key);
         if (!v) return std::nullopt;
-        return std::stod(*v);
+        size_t pos = 0;
+        double result;
+        try {
+            result = std::stod(*v, &pos);
+        } catch (const std::exception&) {
+            throw std::runtime_error("neplatná číselná hodnota u přepínače " + key +
+                                     ": \"" + *v + "\"");
+        }
+        // stod tiše parsuje jen prefix ("31,25" -> 31) — zbytek řetězce musí
+        // být prázdný, jinak jde o chybu (typicky česká desetinná čárka).
+        if (pos != v->size()) {
+            throw std::runtime_error("neplatná číselná hodnota u přepínače " + key +
+                                     ": \"" + *v + "\" (použij tečku jako desetinný oddělovač)");
+        }
+        return result;
     }
 
     std::optional<int> getInt(const std::string& key) {
         auto v = get(key);
         if (!v) return std::nullopt;
-        return std::stoi(*v);
+        size_t pos = 0;
+        int result;
+        try {
+            result = std::stoi(*v, &pos);
+        } catch (const std::exception&) {
+            throw std::runtime_error("neplatná celočíselná hodnota u přepínače " + key +
+                                     ": \"" + *v + "\"");
+        }
+        if (pos != v->size()) {
+            throw std::runtime_error("neplatná celočíselná hodnota u přepínače " + key +
+                                     ": \"" + *v + "\"");
+        }
+        return result;
     }
 
     // Bezhodnotový přepínač (např. --list-devices) — vrací true, pokud je
@@ -132,18 +159,68 @@ private:
     std::vector<bool> used_;
 };
 
+// Ověří rozsahy číselných hodnot v cfg. Vypíše česky pojmenovanou chybu
+// (s jménem přepínače) a vrátí false, pokud je něco mimo rozumný rozsah —
+// bez toho např. --baud 0 spadne na dělení nulou v samplesPerSymbol()
+// (cast +inf na int je UB) a záporná --f0/--f1/--amp vedou k nesmyslnému
+// signálu bez jakékoli diagnostiky.
+bool validateConfig(const ModemConfig& cfg) {
+    if (cfg.sample_rate < 8000 || cfg.sample_rate > 192000) {
+        std::cerr << "chyba: --sample-rate musí být v rozsahu 8000..192000 Hz (zadáno "
+                   << cfg.sample_rate << ")\n";
+        return false;
+    }
+    if (!(cfg.baud > 0.0) || cfg.baud > double(cfg.sample_rate) / 16.0) {
+        std::cerr << "chyba: --baud musí být kladné a nejvýše sample_rate/16 = "
+                   << (double(cfg.sample_rate) / 16.0) << " (zadáno " << cfg.baud << ")\n";
+        return false;
+    }
+    const double nyquist = double(cfg.sample_rate) / 2.0;
+    if (!(cfg.f0 > 0.0) || cfg.f0 >= nyquist) {
+        std::cerr << "chyba: --f0 musí být v rozsahu (0, " << nyquist
+                   << ") Hz (zadáno " << cfg.f0 << ")\n";
+        return false;
+    }
+    if (!(cfg.f1 > 0.0) || cfg.f1 >= nyquist) {
+        std::cerr << "chyba: --f1 musí být v rozsahu (0, " << nyquist
+                   << ") Hz (zadáno " << cfg.f1 << ")\n";
+        return false;
+    }
+    if (!(cfg.amplitude > 0.0) || cfg.amplitude > 1.0) {
+        std::cerr << "chyba: --amp musí být v rozsahu (0, 1] (zadáno "
+                   << cfg.amplitude << ")\n";
+        return false;
+    }
+    return true;
+}
+
 // Naplní ModemConfig ze společných přepínačů (--scheme se řeší zvlášť,
-// protože ovlivňuje výběr schématu, ne jen čísla).
+// protože ovlivňuje výběr schématu, ne jen čísla). --sample-rate se musí
+// aplikovat před --baud/--f0/--f1, protože jejich validace na něm závisí.
 void applyCommonConfig(Args& args, ModemConfig& cfg) {
+    if (auto v = args.getInt("--sample-rate")) cfg.sample_rate = *v;
     if (auto v = args.getDouble("--baud")) cfg.baud = *v;
     if (auto v = args.getDouble("--f0")) cfg.f0 = *v;
     if (auto v = args.getDouble("--f1")) cfg.f1 = *v;
-    if (auto v = args.getInt("--sample-rate")) cfg.sample_rate = *v;
 }
 
 std::string schemeNameOrDefault(Args& args) {
     if (auto v = args.get("--scheme")) return *v;
     return "2-FSK";
+}
+
+// Ověří, že všechny argumenty byly rozpoznány (spotřebovány některým z
+// get/getInt/getDouble/hasFlag volání výše). MUSÍ se volat před jakoukoliv
+// pozorovatelnou akcí příkazu (zápis souboru, spuštění zvuku, vysílání) —
+// jinak překlep jako --f00 tiše proběhne s výchozí hodnotou a chyba se
+// vypíše, až když je akce (např. tx do WAV) nevratně hotová.
+bool checkNoUnknownArgs(Args& args, const char* cmd_name) {
+    if (auto extra = args.firstUnused(0)) {
+        std::cerr << cmd_name << ": neznámý argument: " << *extra << "\n";
+        printUsage();
+        return false;
+    }
+    return true;
 }
 
 // Rozhodne, jestli má smysl vypsat payload jako text (všechny bajty
@@ -181,6 +258,7 @@ int cmdTx(Args& args) {
 
     ModemConfig cfg;
     applyCommonConfig(args, cfg);
+    if (!validateConfig(cfg)) return 1;
 
     std::string scheme_name = schemeNameOrDefault(args);
     const am::ModemScheme* scheme = am::findScheme(scheme_name.c_str());
@@ -188,6 +266,7 @@ int cmdTx(Args& args) {
         std::cerr << "tx: neznámé schéma modulace \"" << scheme_name << "\"\n";
         return 1;
     }
+    if (!checkNoUnknownArgs(args, "tx")) return 1;
 
     auto mod = scheme->makeMod();
     mod->configure(cfg);
@@ -228,6 +307,7 @@ int cmdRx(Args& args) {
 
     ModemConfig cfg;
     applyCommonConfig(args, cfg);
+    if (!validateConfig(cfg)) return 1;
 
     std::string scheme_name = schemeNameOrDefault(args);
     const am::ModemScheme* scheme = am::findScheme(scheme_name.c_str());
@@ -235,6 +315,7 @@ int cmdRx(Args& args) {
         std::cerr << "rx: neznámé schéma modulace \"" << scheme_name << "\"\n";
         return 1;
     }
+    if (!checkNoUnknownArgs(args, "rx")) return 1;
 
     std::vector<float> samples;
     int file_sample_rate = 0;
@@ -242,10 +323,16 @@ int cmdRx(Args& args) {
         std::cerr << "rx: nepodařilo se přečíst " << *in << "\n";
         return 1;
     }
+    // Mismatch mezi vzorkovacím kmitočtem souboru a konfigurací není jen
+    // kosmetika — FrameReceiver by dekódoval špatnou rychlostí a tiše
+    // nenašel žádný rámec bez vysvětlení příčiny. --sample-rate dovoluje
+    // override, ale jen pokud po něm kmitočty skutečně sedí.
     if (file_sample_rate != cfg.sample_rate) {
-        std::cerr << "rx: varování — vzorkovací kmitočet souboru ("
+        std::cerr << "rx: chyba — vzorkovací kmitočet souboru ("
                    << file_sample_rate << " Hz) neodpovídá konfiguraci ("
-                   << cfg.sample_rate << " Hz)\n";
+                   << cfg.sample_rate << " Hz); přidej --sample-rate "
+                   << file_sample_rate << "\n";
+        return 1;
     }
 
     am::FrameReceiver rx;
@@ -303,6 +390,7 @@ int cmdChansim(Args& args) {
     if (auto v = args.getDouble("--echo-delay")) params.echo_delay_s = *v;
     if (auto v = args.getDouble("--echo-gain")) params.echo_gain = *v;
     if (auto v = args.getInt("--seed")) params.seed = static_cast<uint32_t>(*v);
+    if (!checkNoUnknownArgs(args, "chansim")) return 1;
 
     std::vector<float> samples;
     int sample_rate = 0;
@@ -386,14 +474,16 @@ int cmdSend(Args& args) {
     }
 
     auto text = args.get("--text");
+    std::optional<int> prbs_count = args.getInt("--prbs");
 
     ModemConfig cfg;
     applyCommonConfig(args, cfg);
     if (auto v = args.getDouble("--amp")) cfg.amplitude = *v;
     std::optional<int> device_index = args.getInt("--device");
+    if (!validateConfig(cfg)) return 1;
 
-    if (!text) {
-        std::cerr << "send: vyžaduje --text\n";
+    if (!text && !prbs_count) {
+        std::cerr << "send: vyžaduje --text, nebo --prbs <počet rámců>\n";
         printUsage();
         return 1;
     }
@@ -404,21 +494,37 @@ int cmdSend(Args& args) {
         std::cerr << "send: neznámé schéma modulace \"" << scheme_name << "\"\n";
         return 1;
     }
+    if (!checkNoUnknownArgs(args, "send")) return 1;
 
     auto mod = scheme->makeMod();
     mod->configure(cfg);
 
-    std::vector<uint8_t> payload(text->begin(), text->end());
-    if (payload.size() > am::kMaxPayload) {
-        std::cerr << "send: text je příliš dlouhý (" << payload.size()
-                   << " B, max " << am::kMaxPayload << " B)\n";
-        return 1;
+    std::vector<float> samples;
+    if (prbs_count) {
+        // Měřicí režim: N rámců se známou PRBS-15 sekvencí (BER na přijímači).
+        // Rámce jsou identické (pevný seed) — vygeneruje se jeden a N× přehraje.
+        const auto one =
+            am::Framer::buildFrame(am::Prbs15().generate(128), *mod, cfg,
+                                   am::kPayloadPrbs);
+        for (int i = 0; i < *prbs_count; ++i)
+            samples.insert(samples.end(), one.begin(), one.end());
+        std::cerr << "send: PRBS test, " << *prbs_count << " ramcu po 128 B\n";
+    } else {
+        std::vector<uint8_t> payload(text->begin(), text->end());
+        if (payload.size() > am::kMaxPayload) {
+            std::cerr << "send: text je příliš dlouhý (" << payload.size()
+                       << " B, max " << am::kMaxPayload << " B)\n";
+            return 1;
+        }
+        samples = am::Framer::buildFrame(payload, *mod, cfg, am::kPayloadText);
     }
 
-    std::vector<float> samples =
-        am::Framer::buildFrame(payload, *mod, cfg, am::kPayloadText);
-
     am::SpscRing<float> tx_ring(1u << 22);
+    if (samples.size() > tx_ring.capacity()) {
+        std::cerr << "send: příliš dlouhé vysílání pro tx buffer ("
+                   << samples.size() << " vzorků) — sniž --prbs nebo zvyš baud\n";
+        return 1;
+    }
     am::SpscRing<float> rx_ring(1u << 20); // nepoužitý pro RX, ale start() jej vyžaduje
 
     size_t pushed = tx_ring.push(std::span<const float>(samples));
@@ -429,23 +535,58 @@ int cmdSend(Args& args) {
 
     am::AudioEngine engine;
     int playback_index = device_index.value_or(-1);
-    if (!engine.start(-1, playback_index, cfg.sample_rate, rx_ring, tx_ring)) {
-        std::cerr << "send: nepodařilo se spustit zvukové zařízení\n";
+    // Capture se vůbec neotevírá — čisté vysílání nepotřebuje mikrofon a na
+    // macOS by si jinak vyžádalo TCC oprávnění, i když se nic nenahrává.
+    if (!engine.start(am::kNoDevice, playback_index, cfg.sample_rate, rx_ring, tx_ring)) {
+        std::cerr << "send: nepodařilo se spustit zvukové zařízení "
+                     "(zkontroluj --device, případně spusť \"modem_cli devices\")\n";
         return 1;
     }
 
     std::cerr << "send: schema=" << scheme->name
-               << " payload=" << payload.size() << " B"
                << " vzorku=" << samples.size() << "\n";
 
+    // Detekce zaseknutí: pokud se tx_ring přestane vyprazdňovat (odpojené
+    // zařízení, ovladač zamrzlý apod.), smyčka bez toho točí navěky. Sledujeme
+    // poslední pokles velikosti fronty a stav enginu.
     const size_t total = samples.size();
+    constexpr auto kStallTimeout = std::chrono::seconds(5);
+    size_t last_remaining = tx_ring.sizeApprox();
+    auto last_progress_time = std::chrono::steady_clock::now();
+    bool stalled = false;
+
     while (true) {
         size_t remaining = tx_ring.sizeApprox();
         double pct = total > 0 ? 100.0 * double(total - remaining) / double(total) : 100.0;
         std::cerr << "\rsend: postup " << int(pct) << " %   " << std::flush;
         if (remaining == 0) break;
+
+        if (!engine.running()) {
+            std::cerr << "\nsend: chyba — zvukové zařízení přestalo běžet uprostřed vysílání\n";
+            stalled = true;
+            break;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (remaining < last_remaining) {
+            last_remaining = remaining;
+            last_progress_time = now;
+        } else if (now - last_progress_time >= kStallTimeout) {
+            std::cerr << "\nsend: chyba — vysílání se zaseklo (žádný postup "
+                       << std::chrono::duration_cast<std::chrono::seconds>(kStallTimeout).count()
+                       << " s), zkontroluj zvukové zařízení\n";
+            stalled = true;
+            break;
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
+    if (stalled) {
+        engine.stop();
+        return 1;
+    }
+
     // Margin, ať dohraje i poslední zaplněný hardwarový buffer.
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     std::cerr << "\rsend: postup 100 %   \n";
@@ -469,6 +610,7 @@ int cmdListen(Args& args) {
     applyCommonConfig(args, cfg);
     std::optional<int> device_index = args.getInt("--device");
     std::optional<double> seconds = args.getDouble("--seconds");
+    if (!validateConfig(cfg)) return 1;
 
     std::string scheme_name = schemeNameOrDefault(args);
     const am::ModemScheme* scheme = am::findScheme(scheme_name.c_str());
@@ -476,6 +618,13 @@ int cmdListen(Args& args) {
         std::cerr << "listen: neznámé schéma modulace \"" << scheme_name << "\"\n";
         return 1;
     }
+
+    // --record <wav>: ukládej surový signál z mikrofonu pro offline
+    // analýzu (diagnostika chyb, které se dějí jen přes vzduch). Musí se
+    // rozpoznat před checkNoUnknownArgs, jinak by se hlásil jako neznámý.
+    std::optional<std::string> record_path = args.get("--record");
+
+    if (!checkNoUnknownArgs(args, "listen")) return 1;
 
     am::FrameReceiver rx;
     rx.configure(cfg, *scheme);
@@ -485,8 +634,10 @@ int cmdListen(Args& args) {
 
     am::AudioEngine engine;
     int capture_index = device_index.value_or(-1);
-    if (!engine.start(capture_index, -1, cfg.sample_rate, rx_ring, tx_ring)) {
-        std::cerr << "listen: nepodařilo se spustit zvukové zařízení\n";
+    // Playback se vůbec neotevírá — čistý příjem nepotřebuje reproduktor.
+    if (!engine.start(capture_index, am::kNoDevice, cfg.sample_rate, rx_ring, tx_ring)) {
+        std::cerr << "listen: nepodařilo se spustit zvukové zařízení "
+                     "(zkontroluj --device, případně spusť \"modem_cli devices\")\n";
         return 1;
     }
 
@@ -499,6 +650,9 @@ int cmdListen(Args& args) {
     std::vector<float> buf(4096);
     int frame_count = 0;
     bool any_ok = false;
+
+    std::vector<float> recording;
+    if (record_path) recording.reserve(size_t(cfg.sample_rate) * 120);
 
     const auto start_time = std::chrono::steady_clock::now();
     auto last_status = start_time;
@@ -513,6 +667,9 @@ int cmdListen(Args& args) {
 
         size_t got = rx_ring.pop(std::span<float>(buf));
         if (got > 0) {
+            if (record_path)
+                recording.insert(recording.end(), buf.begin(),
+                                 buf.begin() + long(got));
             rx.pushSamples(std::span<const float>(buf.data(), got));
 
             while (auto result = rx.poll()) {
@@ -524,6 +681,18 @@ int cmdListen(Args& args) {
                 std::cout << "typ payloadu: " << int(result->payload_type) << "\n";
                 std::cout << "prumerne SNR: " << result->mean_snr_db << " dB\n";
                 std::cout << "delka payloadu: " << result->payload.size() << " B\n";
+
+                // PRBS rámec: spočti skutečnou bitovou chybovost
+                if (result->payload_type == am::kPayloadPrbs &&
+                    !result->payload.empty()) {
+                    const auto expected =
+                        am::Prbs15().generate(result->payload.size());
+                    const size_t errs =
+                        am::countBitErrors(result->payload, expected);
+                    const size_t bits = result->payload.size() * 8;
+                    std::cout << "BER: " << errs << "/" << bits << " = "
+                              << double(errs) / double(bits) << "\n";
+                }
 
                 if (looksLikeText(result->payload)) {
                     std::cout << "text: "
@@ -553,8 +722,19 @@ int cmdListen(Args& args) {
     engine.stop();
     std::signal(SIGINT, SIG_DFL);
 
+    if (record_path) {
+        if (am::writeWav(*record_path, recording, cfg.sample_rate))
+            std::cerr << "\nlisten: zaznam ulozen do " << *record_path << " ("
+                       << recording.size() / size_t(cfg.sample_rate) << " s)\n";
+        else
+            std::cerr << "\nlisten: zaznam se nepodarilo ulozit!\n";
+    }
+
     std::cerr << "\nlisten: ukonceno, nalezeno ramcu: " << frame_count << "\n";
-    return any_ok ? 0 : 1;
+    // exit kody: 0 = aspon jeden validni ramec, 2 = ramce jen s vadnym CRC,
+    // 1 = zadny ramec (pro skriptovani a mereni)
+    if (any_ok) return 0;
+    return frame_count > 0 ? 2 : 1;
 }
 
 // ---------------------------------------------------------------------------

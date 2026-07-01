@@ -136,9 +136,13 @@ void FrameReceiver::processBuffered() {
             for (int i = 0; i < 16; ++i)
                 sync |= uint32_t(rx_bits_.bit(size_t(kRefSymbols) * bps + i)) << i;
             if (sync != kSyncWord) {
-                // falešná korelace nebo rozbitý začátek → hledej dál kousek
-                // za místem, kde jsme chirp „našli“
-                restartSearch(read_pos_);
+                // Falešná korelace nebo přerušený vysílač. Vrať se těsně ZA
+                // začátek falešného locku — pravý chirp mohl dorazit během
+                // symbolů, které jsme tu spolykali (~0,5 s), a skok na
+                // read_pos_ by ho nenávratně přeskočil (nález z review,
+                // reprodukováno na macu).
+                restartSearch(frame_start_ +
+                              size_t(cfg_.samplesPerSymbol()) / 2);
                 break;
             }
             rx_bits_ = {}; // od teď sbíráme jen hlavičku
@@ -151,7 +155,9 @@ void FrameReceiver::processBuffered() {
             const uint16_t hcrc = uint16_t(h[3]) << 8 | h[4];
             const size_t len = size_t(h[1]) | size_t(h[2]) << 8;
             if (crc16({h.data(), 3}) != hcrc || len > size_t(kMaxPayload)) {
-                restartSearch(read_pos_);
+                // stejné zdůvodnění jako u SYNC selhání
+                restartSearch(frame_start_ +
+                              size_t(cfg_.samplesPerSymbol()) / 2);
                 break;
             }
             ver_flags_ = h[0];
@@ -185,10 +191,16 @@ void FrameReceiver::processBuffered() {
     }
 
     // Zahoď zpracovaný prefix bufferu, ať neroste donekonečna. Ponech
-    // rezervu, do které se může trefit zpřesnění korelační špičky.
+    // rezervu pro zpřesnění korelační špičky — a ve stavech Sync/Header
+    // navíc drž vše od začátku rámce, protože při selhání SYNC/hlavičky
+    // se tam hledání vrací (viz restartSearch výše). Oba stavy jsou
+    // omezené na ~27 symbolů, takže paměť je shora omezená.
     const size_t margin = size_t(corr_.chirpLen() + corr_.gapLen()) + 64;
-    if (read_pos_ > margin + 4096) {
-        const size_t drop = read_pos_ - margin;
+    const bool early_stage = state_ == State::Sync || state_ == State::Header;
+    const size_t anchor =
+        early_stage ? std::min(frame_start_, read_pos_) : read_pos_;
+    if (anchor > margin + 4096) {
+        const size_t drop = anchor - margin;
         buf_.erase(buf_.begin(), buf_.begin() + long(drop));
         read_pos_ -= drop;
         frame_start_ -= std::min(frame_start_, drop);

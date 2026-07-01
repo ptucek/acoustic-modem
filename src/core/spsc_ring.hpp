@@ -9,10 +9,11 @@
 // kapacita bitovou maskou — proto je kapacita vynucena jako mocnina 2.
 
 #include <atomic>
-#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace am {
@@ -20,10 +21,16 @@ namespace am {
 template <typename T>
 class SpscRing {
 public:
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "SpscRing používá memcpy, T musí být trivially copyable");
+
     explicit SpscRing(size_t pow2_capacity)
         : capacity_(pow2_capacity), mask_(pow2_capacity - 1), storage_(pow2_capacity) {
-        assert(pow2_capacity > 0 && (pow2_capacity & (pow2_capacity - 1)) == 0 &&
-               "kapacita musí být mocnina dvou");
+        // Kontrola musí platit i v Release buildu (NDEBUG vypíná assert) —
+        // špatná kapacita by jinak potichu rozbila indexování bitovou maskou.
+        if (pow2_capacity == 0 || (pow2_capacity & (pow2_capacity - 1)) != 0) {
+            throw std::invalid_argument("SpscRing: kapacita musí být mocnina dvou");
+        }
     }
 
     // Zapíše co nejvíce z `in` do bufferu, nikdy neblokuje. Vrací počet

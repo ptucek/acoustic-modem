@@ -9,7 +9,7 @@
 namespace am {
 
 std::vector<float> simulateChannel(std::span<const float> x, const ChannelParams& p,
-                                   int /*sample_rate*/) {
+                                   int sample_rate) {
     std::vector<float> y(x.begin(), x.end());
 
     for (float& v : y) v = float(v * p.gain);
@@ -28,11 +28,14 @@ std::vector<float> simulateChannel(std::span<const float> x, const ChannelParams
         y = std::move(r);
     }
 
-    // Jednoodbočkové echo — hrubá aproximace dozvuku místnosti
+    // Jednoodbočkové echo — hrubá aproximace dozvuku místnosti.
+    // Konvoluce proti KOPII signálu: in-place zpětná vazba (y[i] += g*y[i-d])
+    // by byla nekonečný IIR hřeben a při g→1 nestabilní.
     if (p.echo_gain != 0.0 && p.echo_delay_s > 0.0) {
-        const size_t d = size_t(p.echo_delay_s * 48000.0 + 0.5);
+        const size_t d = size_t(p.echo_delay_s * sample_rate + 0.5);
+        const std::vector<float> src = y;
         for (size_t i = d; i < y.size(); ++i)
-            y[i] += float(p.echo_gain) * y[i - d];
+            y[i] += float(p.echo_gain) * src[i - d];
     }
 
     // AWGN vztažený k RMS signálu: sigma = rms / 10^(SNR/20)

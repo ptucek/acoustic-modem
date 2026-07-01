@@ -26,13 +26,24 @@ struct RxLogEntry {
     std::string hex;               // pro binární/netisknutelný obsah
     bool        show_hex = false;
     size_t      payload_len = 0;
+
+    // Baud a bitů/symbol PLATNÉ V UI V OKAMŽIKU PŘÍJMU — RxFrameEvent
+    // nenese schéma, kterým byl rámec skutečně demodulován, takže jde jen
+    // o nejlepší dostupný odhad (viz last_throughput_bps v RxStats).
+    double baud_at_receive = 0.0;
+    int    bits_per_symbol_at_receive = 1;
 };
 
 // Statistiky přijaté od startu.
 struct RxStats {
     uint64_t frames_ok = 0;
     uint64_t frames_fail = 0;
-    double   last_throughput_bps = 0.0; // B/s posledního rámce
+    // B/s posledního rámce — POZOR: orientační hodnota, počítaná z aktuální
+    // konfigurace UI (baud, schéma) V OKAMŽIKU PŘÍJMU, ne ze schématu,
+    // kterým byl rámec skutečně vysílán/demodulován (RxFrameEvent tuto
+    // informaci nenese). Při nedávné změně schématu/baudu proto může být
+    // hodnota mírně nepřesná.
+    double   last_throughput_bps = 0.0;
 };
 
 // Celý stav UI — vlastní ho main_gui.cpp, panely ho jen čtou/mění.

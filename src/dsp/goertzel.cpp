@@ -26,7 +26,10 @@ std::complex<float> Goertzel::run(std::span<const float> x) const {
     }
     const double re = s1 - s2 * cos_w_;
     const double im = s2 * sin_w_;
-    const double scale = 2.0 / double(n_ > 0 ? n_ : x.size());
+    // normalizace přes skutečnou délku okna (nemusí se krýt s n_
+    // z konstruktoru); prázdné okno → nula, ne NaN
+    if (x.empty()) return {0.f, 0.f};
+    const double scale = 2.0 / double(x.size());
     return {float(re * scale), float(im * scale)};
 }
 

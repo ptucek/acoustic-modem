@@ -5,6 +5,7 @@
 // jediný lock-free úsek je audio callback (SpscRing v AudioEngine).
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -36,6 +37,7 @@ struct ErrorStats {
     uint64_t frames_crc_fail = 0;
     uint64_t prbs_bits = 0;    // celkem porovnaných bitů
     uint64_t prbs_errors = 0;  // celkem chybných bitů
+    uint64_t tx_dropped = 0;   // rámce zahozené: delší než tx buffer
     // časové řady (x = sekundy od startu vlákna) pro ImPlot
     std::vector<std::pair<float, float>> ber;     // BER jednotlivých PRBS rámců
     std::vector<std::pair<float, float>> quality; // odhad rezervy/SNR [dB]
@@ -105,8 +107,15 @@ private:
     ErrorStats stats_;
     bool ber_test_tx_ = false;
 
-    void enqueueFrameLocked(std::span<const uint8_t> payload,
-                            uint8_t payload_type); // volat s drženým mtx_
+    // Epocha časových řad — nastavuje se JEDNOU v konstruktoru; restart
+    // audia ji neresetuje (grafy by dostaly časy jdoucí pozpátku).
+    std::chrono::steady_clock::time_point epoch_;
+
+    double nowSeconds() const;
+    // Modulace rámce je dlouhá operace → běží MIMO zámek; zámek jen na
+    // přečtení konfigurace a vložení hotových vzorků do fronty.
+    void buildAndEnqueue(std::span<const uint8_t> payload, uint8_t payload_type);
+    void drainRings(); // volat jen se zastaveným DSP vláknem a audiem
 };
 
 } // namespace am

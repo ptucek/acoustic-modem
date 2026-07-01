@@ -7,3 +7,4 @@ imgui.ini
 sync/inbox-*.md
 sync/status-*.md
 sync/results/
+.claude/

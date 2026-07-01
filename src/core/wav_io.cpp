@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 
 namespace am {
 
@@ -40,6 +41,15 @@ bool writeWav(const std::string& path, std::span<const float> samples, int sampl
 
     constexpr int kBitsPerSample = 16;
     constexpr int kChannels = 1;
+    const size_t bytes_per_sample = size_t(kBitsPerSample / 8);
+
+    // RIFF/data chunky nesou velikost jako uint32 — pokud by počet vzorků
+    // přetekl (data_bytes, nebo 36+data_bytes pro RIFF velikost), hlavička
+    // by byla vadná (tichá modulo-2^32 zabalení). Radši selhat nahlas.
+    if (samples.size() > (std::numeric_limits<uint32_t>::max() - 36) / bytes_per_sample) {
+        return false;
+    }
+
     const uint32_t data_bytes = uint32_t(samples.size()) * (kBitsPerSample / 8);
     const uint32_t byte_rate = uint32_t(sample_rate) * kChannels * (kBitsPerSample / 8);
     const uint16_t block_align = kChannels * (kBitsPerSample / 8);
@@ -99,6 +109,14 @@ bool readWav(const std::string& path, std::vector<float>& samples, int& sample_r
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
 
+    // Velikost souboru dopředu — poškozená hlavička s obřím chunk_size
+    // (např. z bitové chyby) nesmí vést k alokaci ~4 GiB a bad_alloc;
+    // požadavky větší než zbytek souboru rovnou odmítneme.
+    f.seekg(0, std::ios::end);
+    const std::streamoff file_size = f.tellg();
+    f.seekg(0, std::ios::beg);
+    if (file_size < 12) return false;
+
     uint8_t riff_hdr[12];
     f.read(reinterpret_cast<char*>(riff_hdr), 12);
     if (!f || f.gcount() != 12) return false;
@@ -125,6 +143,15 @@ bool readWav(const std::string& path, std::vector<float>& samples, int& sample_r
         char id[5] = {};
         std::memcpy(id, chunk_hdr, 4);
         uint32_t chunk_size = readU32(chunk_hdr + 4);
+
+        // Poškozená hlavička může deklarovat chunk delší, než kolik bajtů
+        // v souboru vůbec zbývá — takový soubor je neplatný, ale nesmí
+        // způsobit obří alokaci. Ověříme proti zbývající velikosti souboru
+        // před jakýmkoliv resize/allocate.
+        const std::streamoff remaining = file_size - f.tellg();
+        if (remaining < 0 || uint64_t(chunk_size) > uint64_t(remaining)) {
+            return false;
+        }
 
         if (std::memcmp(id, "fmt ", 4) == 0) {
             if (chunk_size < 16) return false;

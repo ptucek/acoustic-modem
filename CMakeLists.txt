@@ -31,6 +31,7 @@ set(MODEMCORE_SOURCES
     src/protocol/crc16.cpp
     src/protocol/framer.cpp
     src/protocol/frame_receiver.cpp
+    src/link/acoustic_link.cpp
 )
 
 # KissFFT (C knihovna) — Goertzelův algoritmus jej nepotřebuje přímo, ale
@@ -72,8 +73,10 @@ target_link_libraries(modemaudio PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+# modemaudio linkuje modemcore PUBLIC — netahat modemcore podruhé
+# (ld na macOS si stěžoval na duplicitní knihovnu)
 add_executable(modem_cli src/cli/main_cli.cpp)
-target_link_libraries(modem_cli PRIVATE modemcore modemaudio)
+target_link_libraries(modem_cli PRIVATE modemaudio)
 
 # ---------------------------------------------------------------------------
 # Testy (doctest, hlavičkově-only třetí strana)
@@ -87,6 +90,7 @@ add_executable(modem_tests
     tests/test_chain.cpp
     tests/test_frame.cpp
     tests/test_prbs.cpp
+    tests/test_link.cpp
 )
 target_link_libraries(modem_tests PRIVATE modemcore)
 
@@ -128,7 +132,7 @@ if(BUILD_GUI AND EXISTS ${CMAKE_SOURCE_DIR}/src/app/main_gui.cpp)
             ${CMAKE_SOURCE_DIR}/third_party/implot
         )
 
-        target_link_libraries(modem_gui PRIVATE modemcore modemaudio SDL3::SDL3 OpenGL::GL)
+        target_link_libraries(modem_gui PRIVATE modemaudio SDL3::SDL3 OpenGL::GL)
     else()
         message(STATUS "SDL3 nenalezeno — modem_gui se nebude sestavovat")
     endif()
@@ -137,12 +141,17 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# modem_tap (Linux, síťový TAP mostík) — src/net/main_tap.cpp ještě neexistuje.
+# modem_tap (Linux + macOS, síťový TUN/TAP mostík mezi virtuálním rozhraním
+# a akustickým modemem). acoustic_link.cpp je už součástí modemcore, tady
+# se přidává jen tap_device.cpp (platformové otevření rozhraní) a main.
 # ---------------------------------------------------------------------------
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS ${CMAKE_SOURCE_DIR}/src/net/main_tap.cpp)
-    file(GLOB TAP_SOURCES ${CMAKE_SOURCE_DIR}/src/net/*.cpp)
-    add_executable(modem_tap ${TAP_SOURCES})
-    target_link_libraries(modem_tap PRIVATE modemcore)
+if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+   AND EXISTS ${CMAKE_SOURCE_DIR}/src/net/main_tap.cpp)
+    add_executable(modem_tap
+        src/net/main_tap.cpp
+        src/link/tap_device.cpp
+    )
+    target_link_libraries(modem_tap PRIVATE modemaudio)
 else()
-    message(STATUS "src/net/main_tap.cpp neexistuje (nebo ne-Linux) — modem_tap se nebude sestavovat")
+    message(STATUS "src/net/main_tap.cpp neexistuje (nebo nepodporovaná platforma) — modem_tap se nebude sestavovat")
 endif()
