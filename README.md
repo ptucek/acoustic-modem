@@ -43,6 +43,29 @@ audio vstup nepůjde. `modem_gui` běží nad OpenGL 3.2 Core (jediný profil,
 který macOS pro GL nabízí). `modem_tap` na macOS používá `utun` (TUN, L3) —
 Ethernet TAP je jen na Linuxu.
 
+### Build na Windows
+
+Vyžaduje Visual Studio 2022 (MSVC, C++20) nebo dostatečně novou MinGW-w64
+distribuci (GCC 13+), CMake a [vcpkg](https://vcpkg.io/) pro SDL3.
+
+```powershell
+vcpkg install sdl3
+cmake -B build -S . -G "Visual Studio 17 2022" `
+    -DCMAKE_TOOLCHAIN_FILE=<cesta k vcpkg>/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config RelWithDebInfo
+ctest --test-dir build -C RelWithDebInfo
+```
+
+Bez SDL3 (přes vcpkg) se `modem_gui` automaticky vynechá, stejně jako na
+Linuxu/Fedoře — `modem_cli` a testy to neovlivní. Audio I/O jede přes
+WASAPI backend miniaudia, bez nutnosti dalších závislostí.
+
+`modem_tap` (síťový most IP přes zvuk) **na Windows zatím není podporovaný**
+— vyžadoval by TUN/TAP ekvivalent Linuxova `/dev/net/tun`/macOS `utun`,
+což na Windows řeší jen knihovna [Wintun](https://www.wintun.net/) (stejná
+jako u WireGuardu). Zatím jde jen o vynechaný CMake target, žádná
+implementace zatím neexistuje — viz TODO v `src/link/tap_device.cpp`.
+
 ### Spuštění GUI
 
 ```sh

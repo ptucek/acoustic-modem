@@ -9,6 +9,14 @@
 // to nemá smysl implementovat. utun navíc obaluje každý paket 4bajtovou
 // hlavičkou s protokolovou rodinou (AF_INET/AF_INET6), kterou je nutné
 // při čtení odstranit a při zápisu doplnit.
+//
+// Windows: zatím neimplementováno (modem_tap se na Windows nesestavuje,
+// viz CMakeLists.txt). Až na to dojde, cesta vede přes Wintun
+// (https://www.wintun.net/, stejná knihovna jako WireGuard) — na rozdíl
+// od Linuxu/macOS to není file descriptor s read()/write()/poll(), ale
+// session s ring bufferem (WintunReceivePacket/WintunSendPacket) a čekáním
+// na WintunGetReadWaitEvent() přes WaitForSingleObject. Podporuje jen L3
+// (Tun), stejně jako dnešní macOS větev.
 
 #include "link/tap_device.hpp"
 

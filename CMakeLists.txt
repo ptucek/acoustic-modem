@@ -9,7 +9,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-add_compile_options(-Wall -Wextra)
+if(MSVC)
+    add_compile_options(/W4)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
 
 option(BUILD_GUI "Build GUI" ON)
 
@@ -147,6 +151,9 @@ endif()
 # modem_tap (Linux + macOS, síťový TUN/TAP mostík mezi virtuálním rozhraním
 # a akustickým modemem). acoustic_link.cpp je už součástí modemcore, tady
 # se přidává jen tap_device.cpp (platformové otevření rozhraní) a main.
+# Na Windows zatím záměrně chybí — tap_device.cpp používá POSIX rozhraní
+# (/dev/net/tun na Linuxu, utun sockety na macOS), na Windows by ekvivalent
+# šel jen přes Wintun (viz TODO v src/link/tap_device.cpp).
 # ---------------------------------------------------------------------------
 if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
    AND EXISTS ${CMAKE_SOURCE_DIR}/src/net/main_tap.cpp)
@@ -156,5 +163,5 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     )
     target_link_libraries(modem_tap PRIVATE modemaudio)
 else()
-    message(STATUS "src/net/main_tap.cpp neexistuje (nebo nepodporovaná platforma) — modem_tap se nebude sestavovat")
+    message(STATUS "modem_tap se nebude sestavovat (nepodporovaná platforma, nebo src/net/main_tap.cpp neexistuje)")
 endif()
