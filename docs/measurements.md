@@ -300,10 +300,51 @@ Obecné ponaučení pro zprávu: OOK bez reference (druhého tónu či fáze)
 je strukturálně citlivé na kanál s pamětí — dozvuk je forma
 mezisymbolové interference, kterou FSK/DBPSK řeší už konstrukcí.
 
+### `modem_tap` — ping přes zvuk (M7 demo)
+
+První end-to-end IP přenos akustickým kanálem (2026-07-02 dopoledne).
+Sestava: Fedora `am0` (TUN) 10.99.0.1/24 ↔ macOS `utun5` 10.99.0.2,
+MTU 200, 16-FSK, `--amp 0.85`, hlasitost 90 %, CSMA MAC.
+
+**Výsledky:**
+
+| Směr | Pakety | RTT |
+|---|---|---|
+| Linux → Mac (`ping -c1` + série `-c3 -i45`) | 3/4 | 13,15 / 13,22 / 13,47 s |
+| Mac → Linux (`ping -c1`) | 1/1 | 14,06 s |
+
+RTT ~13–14 s odpovídá teorii: 84 B ICMP paket ≈ 6–7 s airtime na směr
+při ~125 bit/s (16-FSK), plus preambule, CSMA a fronty. Jedna ztráta
+ze série = kolize/backoff, u best-effort linky očekávané — TCP/ICMP
+vrstvy nad tím jsou přesně od toho. Čítače CSMA MAC na TX straně
+(Fedora, celá session): `tx_frames=80 rx_ok=7 rx_crc_fail=1
+backoffs=57` — carrier-sense na vlastní vysílání funguje (backoffy),
+kanálem prošlo 7/8 rámců čistě.
+
+**Debug nálezy cestou k prvnímu úspěšnému pingu** (každý „neúspěch"
+byl mimo modem):
+
+1. **IP na špatném rozhraní (mac):** `modem_tap` vytvořil `utun5`,
+   ale jeho výpis uvízl v bufferu roury a IP se omylem nastavila na
+   starší `utun3`. Rámce chodily až do kernelu (rx_ok rostl), jen
+   odpověď neměla kudy vzniknout. Ponaučení: výpisy programů
+   v rourách bufferují — jméno rozhraní ověřovat z `ifconfig`/`ip`,
+   ne z výpisu.
+2. **macOS stealth mode:** firewall tiše zahazoval ICMP echo requesty
+   — paket prokazatelně dorazil (tcpdump na utun5), odpověď nevznikla.
+3. **`ping` timeout vs. RTT:** výchozí čekání pingu (~10 s) je kratší
+   než RTT linky (~13–14 s) — „ztracené" odpovědi reálně dorazily po
+   timeoutu (tcpdump je viděl, id/seq seděly). Na macOS je `-W`
+   v milisekundách, na Linuxu v sekundách.
+
+Reprodukce: `sudo modem_tap --mode tun --scheme 16-FSK --amp 0.85`
+na obou strojích, IP dle výpisu (`ip addr`/`ifconfig`!), MTU 200,
+`ping -c1 -W120 <peer>` (Linux) / `ping -c1 -W60000 <peer>` (macOS).
+
 ## Plánovaná měření
 
-- **Dokončení Mac → Linux** — po vyladění úrovně (hlasitost mac /
-  mic gain Fedora) celá matice 16-FSK, 2-FSK, DBPSK, OOK.
+- **Delší modem_tap testy** — TCP přes zvuk (např. `nc` chat),
+  chování CSMA při obousměrném provozu, ztrátovost na delší sérii.
 - **Orientace × SNR** — mikrofonní pole notebooku má patrně beamforming
   (citlivost mimo osu displeje klesá): po natočení RX notebooku ke zdroji
   vyskočilo SNR o několik dB. Mini-měření: stejná hlasitost, několik úhlů

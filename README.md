@@ -140,6 +140,8 @@ stejná místnost):
   při 4× vyšší propustnosti.
 - **DBPSK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 18,5–20 dB.
 - **OOK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 21,6–22,3 dB.
+- **IP přes zvuk (`modem_tap`):** obousměrný ping vzduchem, RTT ≈ 13–14 s
+  (84 B ICMP @ ~125 bit/s) — viz [`docs/measurements.md`](docs/measurements.md).
 
 Podrobná metodika, kompletní tabulky a forenzní rozbor jedné anomálie
 (xrun na TX straně) jsou v [`docs/measurements.md`](docs/measurements.md).
@@ -172,8 +174,8 @@ third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 | M3 | Reálný zvukový vstup/výstup (miniaudio) | hotovo |
 | M4 | GUI (ImGui/ImPlot): živé spektrum, konstelace, metriky | hotovo |
 | M5 | Další modulace: OOK, DBPSK, 16-FSK | hotovo |
-| M6 | Měření BER/FER na reálném kanálu (PRBS) | probíhá |
-| M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | kód hotový, ping demo zbývá |
+| M6 | Měření BER/FER na reálném kanálu (PRBS) | hotovo — obousměrná matice, BER 0 |
+| M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | hotovo — ping vzduchem, RTT ~13 s |
 | M8 | Závěrečná zpráva, doladění | výhled |
 
 ## Licence a kredity
