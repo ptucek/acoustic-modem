@@ -3,6 +3,7 @@
 // (bit 0 bajtu se vysílá jako první) — konvence platí pro celý projekt.
 
 #include <cstdint>
+#include <cstddef>
 #include <span>
 #include <vector>
 
@@ -38,6 +39,15 @@ public:
     // doplnění nulami na násobek n bitů (celé symboly)
     void padToMultiple(int n) {
         while (bits_.size() % size_t(n)) pushBit(false);
+    }
+
+    // Zahodí prvních n bitů (posune začátek). Přijímač po přečtení pole
+    // rámce zahodí jen jeho bity a případný přesah symbolu, který pole
+    // překročil, ponechá pro pole následující — nutné, když bitsPerSymbol
+    // nedělí délky polí (např. 16 b/symbol u Q-FSK: hlavička = 2,5 symbolu).
+    void dropFront(size_t n) {
+        if (n >= bits_.size()) bits_.clear();
+        else bits_.erase(bits_.begin(), bits_.begin() + std::ptrdiff_t(n));
     }
 
     std::vector<uint8_t> toBytes() const {

@@ -20,4 +20,7 @@ std::unique_ptr<IDemodulator> makeDbpskDemod();
 std::unique_ptr<IModulator>   makeMfsk16Mod();
 std::unique_ptr<IDemodulator> makeMfsk16Demod();
 
+std::unique_ptr<IModulator>   makeQfskMod();
+std::unique_ptr<IDemodulator> makeQfskDemod();
+
 } // namespace am

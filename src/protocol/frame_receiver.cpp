@@ -145,7 +145,7 @@ void FrameReceiver::processBuffered() {
                               size_t(cfg_.samplesPerSymbol()) / 2);
                 break;
             }
-            rx_bits_ = {}; // od teď sbíráme jen hlavičku
+            rx_bits_.dropFront(size_t(kRefSymbols) * size_t(bps) + 16); // zahoď REF+SYNC, přesah = začátek hlavičky
             state_ = State::Header;
             break;
         }
@@ -162,7 +162,7 @@ void FrameReceiver::processBuffered() {
             }
             ver_flags_ = h[0];
             payload_len_ = len;
-            rx_bits_ = {};
+            rx_bits_.dropFront(40); // zahoď hlavičku, přesah = začátek payloadu
             state_ = State::Payload;
             break;
         }

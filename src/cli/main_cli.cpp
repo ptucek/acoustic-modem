@@ -197,11 +197,17 @@ bool validateConfig(const ModemConfig& cfg) {
     return true;
 }
 
+std::string schemeNameOrDefault(Args& args); // definice níže
+
 // Naplní ModemConfig ze společných přepínačů (--scheme se řeší zvlášť,
 // protože ovlivňuje výběr schématu, ne jen čísla). --sample-rate se musí
 // aplikovat před --baud/--f0/--f1, protože jejich validace na něm závisí.
 void applyCommonConfig(Args& args, ModemConfig& cfg) {
     if (auto v = args.getInt("--sample-rate")) cfg.sample_rate = *v;
+    // Q-FSK je navržená pro 62,5 Bd (4×16-FSK = 1 kbit/s); ostatní schémata
+    // jedou na 31,25 Bd. Výchozí baud vybereme podle schématu, explicitní
+    // --baud ho vždy přebije.
+    if (schemeNameOrDefault(args) == "Q-FSK") cfg.baud = 62.5;
     if (auto v = args.getDouble("--baud")) cfg.baud = *v;
     if (auto v = args.getDouble("--f0")) cfg.f0 = *v;
     if (auto v = args.getDouble("--f1")) cfg.f1 = *v;

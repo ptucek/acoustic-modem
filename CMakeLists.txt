@@ -27,6 +27,7 @@ set(MODEMCORE_SOURCES
     src/modem/ook.cpp
     src/modem/dbpsk.cpp
     src/modem/mfsk16.cpp
+    src/modem/qfsk.cpp
     src/modem/registry.cpp
     src/protocol/crc16.cpp
     src/protocol/framer.cpp
@@ -88,6 +89,7 @@ add_executable(modem_tests
     tests/test_ring.cpp
     tests/test_goertzel.cpp
     tests/test_chain.cpp
+    tests/test_qfsk.cpp
     tests/test_frame.cpp
     tests/test_prbs.cpp
     tests/test_link.cpp

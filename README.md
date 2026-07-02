@@ -6,7 +6,7 @@
 Přenos digitálních dat **zvukem** mezi dvěma běžnými počítači — reproduktor →
 vzduch → mikrofon, žádný kabel, žádné rádio. Projekt ukazuje celý řetězec
 komunikačního systému v malém: vyměnitelné modulace (2-FSK, OOK, DBPSK,
-16-FSK), rámce s CRC, chirp synchronizaci, měření chybovosti (BER/FER) a na
+16-FSK, Q-FSK), rámce s CRC, chirp synchronizaci, měření chybovosti (BER/FER) a na
 vrcholu i přenos IP paketů nad zvukem (`modem_tap`, TUN/TAP rozhraní).
 Grafické rozhraní zobrazuje živé spektrum (waterfall), konstelační diagram a
 grafy kvality signálu.
@@ -102,15 +102,24 @@ běžného Ethernetu.
 
 ## Modulace
 
-| Schéma | Princip | Bitů/symbol | Propustnost @ 31,25 Bd |
+| Schéma | Princip | Bitů/symbol | Propustnost |
 |---|---|---|---|
-| **2-FSK** | bit → tón `f0`/`f1` | 1 | ≈ 31 bit/s |
-| **OOK** | bit 1 → nosná zapnuta, bit 0 → ticho | 1 | ≈ 31 bit/s |
-| **DBPSK** | bit → otočení fáze o 180° vůči předchozímu symbolu | 1 | ≈ 31 bit/s |
-| **16-FSK** | 16 ortogonálních tónů, Grayův kód | 4 | ≈ 125 bit/s |
+| **2-FSK** | bit → tón `f0`/`f1` | 1 | ≈ 31 bit/s @ 31,25 Bd |
+| **OOK** | bit 1 → nosná zapnuta, bit 0 → ticho | 1 | ≈ 31 bit/s @ 31,25 Bd |
+| **DBPSK** | bit → otočení fáze o 180° vůči předchozímu symbolu | 1 | ≈ 31 bit/s @ 31,25 Bd |
+| **16-FSK** | 16 ortogonálních tónů, Grayův kód | 4 | ≈ 125 bit/s @ 31,25 Bd |
+| **Q-FSK** | 4 paralelní 16-FSK skupiny (G1–G4) v pásmech mimo dozvukové zářezy | 16 | ≈ **1000 bit/s @ 62,5 Bd** |
 
 Všechna schémata sdílejí stejný formát rámce a stejnou fyzickou preambuli —
 podrobný rozbor parametrů a zdůvodnění voleb je v [`docs/protocol.md`](docs/protocol.md).
+
+**Q-FSK** vysílá čtyři 16-FSK tóny současně ve čtyřech úzkých pásmech
+(G1 1050–1990, G2 2800–3740, G3 4300–5240, G4 6300–7240 Hz), která sondáž
+kanálu (`docs/measurements.md`) vyhodnotila jako průchozí v obou směrech —
+leží mezi frekvenčně selektivními zářezy od dozvuku místnosti. 16 bitů na
+symbol × 62,5 Bd dává **8× propustnost 16-FSK**. Běží na 62,5 Bd
+automaticky (`--baud` volbu lze přebít). Amplituda každého tónu je 1/4
+nastavené, aby součet čtyř tónů neklipoval.
 
 ## Signálový řetězec
 
@@ -152,7 +161,7 @@ Podrobná metodika, kompletní tabulky a forenzní rozbor jedné anomálie
 src/
   core/       konfigurace, bitový proud, WAV I/O, SPSC ring buffer, PRBS-15
   dsp/        chirp, Goertzelův filtr, FIR, simulace kanálu
-  modem/      modulátory/demodulátory (2-FSK, OOK, DBPSK, 16-FSK) + registr
+  modem/      modulátory/demodulátory (2-FSK, OOK, DBPSK, 16-FSK, Q-FSK) + registr
   protocol/   CRC-16, sestavení rámců (Framer), příjem rámců (FrameReceiver)
   link/       CSMA MAC (AcousticLink) a TUN/TAP zařízení pro modem_tap
   audio/      obálka nad miniaudio (real-time I/O)
@@ -177,6 +186,7 @@ third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 | M6 | Měření BER/FER na reálném kanálu (PRBS) | hotovo — obousměrná matice, BER 0 |
 | M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | hotovo — ping vzduchem, RTT ~13 s |
 | M8 | Závěrečná zpráva ([`docs/zprava.md`](docs/zprava.md)) | hotovo |
+| M9 | Rychlejší modulace (Q-FSK, 4×16-FSK, 1 kbit/s) | implementováno + testy; měření vzduchem čeká |
 
 ## Licence a kredity
 
