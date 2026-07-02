@@ -241,10 +241,73 @@ Související opravy v CLI: `--device` přijímá i část jména zařízení
 (indexy se přeskupují, když se objeví/ztratí síťová zařízení typu
 AirPlay) a `listen` má 5s watchdog na zařízení, které nedodává vzorky.
 
+### Směr Mac → Linux — výsledky (po vyladění úrovně)
+
+Po zvýšení úrovně TX (mac: hlasitost 90 %, `--amp 0.85`) a natočení RX
+notebooku ke zdroji (mikrofonní pole má směrovost — viz plán měření
+orientace):
+
+| Schéma | FER | BER | SNR | Pozn. |
+|---|---|---|---|---|
+| 16-FSK | 0/3 | 0/3072 | 21,4–21,5 dB | |
+| 2-FSK | 0/3 | 0/3072 | 29,7–32,2 dB | |
+| DBPSK | 0/3 | 0/3072 | 11,8–12,3 dB | čisté i při nejnižším SNR dne |
+| OOK | 0/6 | 0/6144 | ~16 dB | offline po opravě demodulátoru (viz níže) |
+
+Poznámka k 16-FSK: první pokus na plné úrovni zachytil 2/3 rámců čistě
+a třetí ztratil — uživatel během něj otáčel RX notebook (časově proměnný
+kanál). Opakování se stabilní polohou dalo 0/3. Mezikrok při nízké úrovni
+(SNR 13,4 dB) dával BER ~2 % s chybami na opakovaných pozicích
+(frekvenčně selektivní útlum) — 16-FSK potřebuje ~18+ dB rezervu.
+
+### Nález: dozvuk místnosti vs. OOK (a oprava demodulátoru)
+
+OOK jako jediné schéma zpočátku selhalo úplně (0 rámců při silném i
+slabém signálu), a to **jen ve směru Mac → Linux**. Rozbor záznamů:
+
+- Preambule (warmup + chirp) v záznamu čistá, klíčování 1200 Hz jasně
+  viditelné — receiver se přesto nikdy nezamkl na SYNC.
+- Příčina: **dozvuk místnosti**. Nosná po ON symbolu doznívá ~20 dB za
+  60 ms; izolovaná nula po jedničce (SYNC 0x2DD4 je obsahuje) měla přes
+  celé symbolové okno energii jen ~7 dB pod ON, zatímco adaptivní práh
+  ležel −10 dB pod ON → nula se četla jako jednička → SYNC nikdy
+  nesedl.
+- Proč to ve směru Linux → Mac prošlo: na macu byl signál slabší
+  (SNR ~22 dB) a dozvukový ocas zapadl pod šum mikrofonu. Na Fedoře
+  (citlivější mikrofon, SNR >30 dB) ocas nad šumem přežil — **příliš
+  čistý signál OOK paradoxně škodil**. Snížení hlasitosti nepomohlo:
+  dozvuk škáluje se signálem.
+
+Oprava demodulátoru (`src/modem/ook.cpp`), laděná offline proti dvěma
+reálným nahrávkám (hlasité i tiché) se známou PRBS:
+
+1. **Energie z druhé poloviny symbolového okna** — dozvuk z předchozího
+   symbolu doznívá na jeho začátku; ON symbol nese nosnou celou dobu,
+   takže se nic neztrácí. (Samotné: SYNC začal zamykat, ale začátek
+   payloadu měl stále chyby 0→1.)
+2. **Práh vážený k ON**: `thr = on^0,7 · off^0,3` (v dB ~4–7 dB pod ON)
+   místo geometrického průměru. OFF energie je bimodální směs hlubokých
+   nul a dozvukových ocasů — EMA průměr leží mezi nimi a symetrický práh
+   nechával ocasy nad sebou. ON je stabilní (±2–3 dB), posun prahu
+   k ON jedničky neohrožuje.
+3. **Seed OFF úrovně −13 dB** od referenčního symbolu (dřív −20 dB) —
+   práh je rozumný od prvního symbolu, EMA doladí.
+
+Po opravě obě nahrávky dekódují 3/3 rámců s CRC OK (BER 0), včetně
+rámce, který původní receiver ani nedetekoval. Regresní data: nahrávky
+jsou archivovány na RX stroji (`~/builds/acoustic-modem/recordings/`).
+Obecné ponaučení pro zprávu: OOK bez reference (druhého tónu či fáze)
+je strukturálně citlivé na kanál s pamětí — dozvuk je forma
+mezisymbolové interference, kterou FSK/DBPSK řeší už konstrukcí.
+
 ## Plánovaná měření
 
 - **Dokončení Mac → Linux** — po vyladění úrovně (hlasitost mac /
   mic gain Fedora) celá matice 16-FSK, 2-FSK, DBPSK, OOK.
+- **Orientace × SNR** — mikrofonní pole notebooku má patrně beamforming
+  (citlivost mimo osu displeje klesá): po natočení RX notebooku ke zdroji
+  vyskočilo SNR o několik dB. Mini-měření: stejná hlasitost, několik úhlů
+  natočení, SNR/BER na 16-FSK.
 - **Matice vzdálenost × hlasitost** — systematické měření SNR/BER v
   závislosti na vzdálenosti reproduktor–mikrofon a nastavené hlasitosti,
   pro všechna čtyři schémata.

@@ -73,14 +73,33 @@ public:
     }
 
     uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
-        const float e = Goertzel::energy(g_.run(sym));
+        // Dozvuk místnosti: po ON symbolu nosná doznívá desítky ms a přelévá
+        // se do začátku následujícího symbolu — izolovaná nula po jedničce
+        // pak z celého okna vyjde nad prahem a čte se jako jednička (reálně
+        // naměřeno vzduchem: ocas jen ~7 dB pod ON, práh je −10 dB). Energie
+        // se proto měří až od kReverbSkip okna; u ON symbolu se tím nic
+        // neztrácí (nosná běží celý symbol), u nuly po jedničce je dozvuk
+        // v pozdější části citelně slabší.
+        const size_t skip = size_t(double(sym.size()) * kReverbSkip);
+        const float e = Goertzel::energy(g_.run(sym.subspan(skip)));
         if (on_avg_ < 0.f) {
-            // referenční symbol: podle protokolu je vždy ON
+            // Referenční symbol: podle protokolu je vždy ON. Seed OFF úrovně
+            // je −13 dB od ON (ne −20 dB): počáteční práh tak leží −6,5 dB
+            // pod ON a odmítne dozvukové ocasy hned od prvního symbolu —
+            // s nižším seedem se práh k reálné úrovni dozvuku šplhal desítky
+            // symbolů a začátek payloadu se četl s chybami 0→1 (misready
+            // navíc adaptaci brzdí, protože aktualizují on_avg_ místo
+            // off_avg_). EMA pak práh doladí podle skutečných podmínek.
             on_avg_ = e;
-            off_avg_ = e * 0.01f;
+            off_avg_ = e * 0.05f;
         }
-        // práh = geometrický průměr → uprostřed mezi ON a OFF v dB
-        const float thr = std::sqrt(on_avg_ * std::max(off_avg_, 1e-12f));
+        // Práh vážený k ON (0,7/0,3 v dB): OFF energie tvoří bimodální směs
+        // hlubokých nul a dozvukových ocasů po jedničkách — off_avg_ (EMA
+        // přes obojí) leží mezi nimi a symetrický práh (geometrický průměr)
+        // nechává ocasy nad sebou. ON je naproti tomu stabilní (±2–3 dB),
+        // takže práh ~4–7 dB pod ON odmítne ocasy a jedničky neohrozí.
+        const float thr = std::pow(on_avg_, 0.7f) *
+                          std::pow(std::max(off_avg_, 1e-12f), 0.3f);
         const bool bit = e > thr;
         // klouzavý odhad (EMA) — sleduje pomalé změny hlasitosti/útlumu
         constexpr float a = 0.15f;
@@ -96,6 +115,9 @@ public:
     }
 
 private:
+    // Podíl začátku symbolového okna vynechaný z měření energie (dozvuk).
+    static constexpr double kReverbSkip = 0.5;
+
     Goertzel g_;
     float on_avg_ = -1.f, off_avg_ = 0.f;
 };
