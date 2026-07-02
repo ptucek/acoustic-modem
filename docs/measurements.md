@@ -341,8 +341,37 @@ Reprodukce: `sudo modem_tap --mode tun --scheme 16-FSK --amp 0.85`
 na obou strojích, IP dle výpisu (`ip addr`/`ifconfig`!), MTU 200,
 `ping -c1 -W120 <peer>` (Linux) / `ping -c1 -W60000 <peer>` (macOS).
 
+### Sondáž kanálu (návrh rychlejší modulace)
+
+Sekvenční tónový hřeben 300–7800 Hz po 250 Hz (0,35 s tón + 0,35 s
+ticho pro měření doznívání), oba směry (`sync/probe/probe-sweep.wav`).
+Metodické poznámky: (1) 90% hlasitost na krátkou vzdálenost přebudí
+mikrofon do klipu — sonda se hraje na ~35 %; (2) sekce bílého šumu
+klipuje i potichu (širokopásmový součet + energie reproduktorů nad
+měřeným pásmem) — pro H(f) se používá výhradně hřeben; (3) SNR se
+počítá se šumem měřeným stejně dlouhým oknem a přepočítává na
+symbolovou šířku pásma.
+
+**Mac → Fedora (35 % hlasitosti):** H(f) relativně plochá, slabší
+550–800 Hz, zářezy ~5550 a ~6050 Hz; SNR @125 Bd 36–59 dB; doznívání
+k −20 dB typicky 25–70 ms, nejhůř 130 ms (v zářezu 5550 Hz).
+
+**Fedora → Mac:** nejsilnější pásmo 550–3550 Hz; hluboké zářezy 800,
+2550 a 4050 Hz (−20 až −30 dB proti okolí); pokles nad ~5,5 kHz;
+SNR @125 Bd 48–78 dB; doznívání typicky 10–55 ms, nejhůř ~100–115 ms
+(opět v zářezech — slabá přímá cesta ⇒ relativně silnější odrazy).
+
+**Závěry pro návrh:** kanál není limitovaný šumem (SNR rezerva
+>35 dB všude i při 35% hlasitosti), ale dozvukem a frekvenčně
+selektivními zářezy, které se liší podle směru. Symbol 16 ms
+(62,5 Bd) je vůči doznívání ~40 ms bezpečný pro FSK detekci
+(ringing předchozího symbolu soutěží v argmax už jen −10 až −15 dB
+pod aktuálním tónem); využitelné pásmo ~1050–7800 Hz s vyhýbáním
+zářezům obou směrů.
+
 ## Plánovaná měření
 
+- **Paralelní MFSK** — BER měření nové rychlejší modulace vzduchem.
 - **Delší modem_tap testy** — TCP přes zvuk (např. `nc` chat),
   chování CSMA při obousměrném provozu, ztrátovost na delší sérii.
 - **Orientace × SNR** — mikrofonní pole notebooku má patrně beamforming
