@@ -195,6 +195,11 @@ void drawControlBar(UiState& ui) {
                 bool sel = int(i) == ui.scheme_index;
                 if (ImGui::Selectable(schemes[i].name, sel)) {
                     ui.scheme_index = int(i);
+                    // Q-FSK je navržená pro 62,5 Bd (1 kbit/s) — nastav
+                    // automaticky (stejně jako modem_cli); uživatel může
+                    // baud přebít comboxem níž.
+                    if (std::strcmp(schemes[i].name, "Q-FSK") == 0)
+                        ui.cfg.baud = 62.5;
                     changed = true;
                 }
             }

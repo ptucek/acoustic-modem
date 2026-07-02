@@ -3,6 +3,9 @@
 // panely definované v panels.hpp/panels.cpp.
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 #include <SDL3/SDL.h>
 
@@ -17,7 +20,108 @@
 #include "core/config.hpp"
 #include "modem/modulator.hpp"
 
-int main(int, char**) {
+namespace {
+
+void printGuiUsage() {
+    std::printf(
+        "modem_gui — GUI akustického modemu\n\n"
+        "Použití: modem_gui [--scheme NÁZEV] [--baud N] [--sample-rate N]\n"
+        "                   [--f0 N] [--f1 N] [--amp N]\n\n"
+        "  --scheme  2-FSK | OOK | DBPSK | 16-FSK | Q-FSK  (výchozí 2-FSK)\n"
+        "  --baud    symbolová rychlost v Bd (Q-FSK výchozí 62.5, jinak 31.25)\n"
+        "  --f0/--f1 tóny 2-FSK/nosná (Hz); --amp amplituda 0..1\n"
+        "  Vše lze měnit i za běhu v ovládacím panelu GUI.\n");
+}
+
+int schemeIndexByName(const char* name) {
+    const auto schemes = am::modemRegistry();
+    for (size_t i = 0; i < schemes.size(); ++i)
+        if (std::strcmp(schemes[i].name, name) == 0) return int(i);
+    return -1;
+}
+
+// Naparsuje přepínače do cfg + scheme_index. Vrací false při chybě (vypíše ji).
+// Stejná schémata/logika jako modem_cli, aby se GUI dalo spustit rovnou na
+// konkrétní modulaci (např. `modem_gui --scheme Q-FSK`).
+bool parseGuiArgs(int argc, char** argv, am::ModemConfig& cfg, int& scheme_index) {
+    std::string scheme_name = "2-FSK";
+    bool baud_set = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        auto value = [&](double& out) -> bool {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "modem_gui: %s vyžaduje hodnotu\n", a.c_str());
+                return false;
+            }
+            out = std::strtod(argv[++i], nullptr);
+            return true;
+        };
+        if (a == "--help" || a == "-h") {
+            printGuiUsage();
+            std::exit(0);
+        } else if (a == "--scheme") {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "modem_gui: --scheme vyžaduje název\n");
+                return false;
+            }
+            scheme_name = argv[++i];
+        } else if (a == "--baud") {
+            double v;
+            if (!value(v)) return false;
+            cfg.baud = v;
+            baud_set = true;
+        } else if (a == "--sample-rate") {
+            double v;
+            if (!value(v)) return false;
+            cfg.sample_rate = int(v);
+        } else if (a == "--f0") {
+            double v;
+            if (!value(v)) return false;
+            cfg.f0 = v;
+        } else if (a == "--f1") {
+            double v;
+            if (!value(v)) return false;
+            cfg.f1 = v;
+        } else if (a == "--amp") {
+            double v;
+            if (!value(v)) return false;
+            cfg.amplitude = v;
+        } else {
+            std::fprintf(stderr, "modem_gui: neznámý argument: %s\n", a.c_str());
+            printGuiUsage();
+            return false;
+        }
+    }
+
+    const int idx = schemeIndexByName(scheme_name.c_str());
+    if (idx < 0) {
+        std::fprintf(stderr, "modem_gui: neznámé schéma modulace \"%s\"\n",
+                     scheme_name.c_str());
+        return false;
+    }
+    scheme_index = idx;
+
+    // Q-FSK je navržená pro 62,5 Bd (4×16-FSK = 1 kbit/s); ostatní jedou na
+    // 31,25 Bd. Výchozí baud podle schématu, explicitní --baud ho přebije.
+    if (!baud_set && scheme_name == "Q-FSK") cfg.baud = 62.5;
+
+    if (!(cfg.baud > 0.0) || cfg.baud > double(cfg.sample_rate) / 16.0) {
+        std::fprintf(stderr,
+                     "modem_gui: --baud musí být kladné a nejvýše sample_rate/16 "
+                     "(%.1f), zadáno %.3f\n",
+                     double(cfg.sample_rate) / 16.0, cfg.baud);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    am::ModemConfig start_cfg{};
+    int start_scheme_index = 0;
+    if (!parseGuiArgs(argc, argv, start_cfg, start_scheme_index)) return 2;
+
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init selhal: %s\n", SDL_GetError());
         return 1;
@@ -78,8 +182,8 @@ int main(int, char**) {
     // --- vlastní stav aplikace ---
     am::DspThread dsp;
     am::UiState ui(dsp);
-    ui.cfg = am::ModemConfig{}; // výchozí konfigurace z core/config.hpp
-    ui.scheme_index = 0;        // první schéma z registru (2-FSK)
+    ui.cfg = start_cfg;                     // z CLI přepínačů (nebo výchozí)
+    ui.scheme_index = start_scheme_index;   // --scheme (výchozí 2-FSK)
 
     if (!dsp.start(ui.cfg, ui.scheme_index)) {
         std::fprintf(stderr, "Nepodařilo se spustit výchozí audio zařízení — "
