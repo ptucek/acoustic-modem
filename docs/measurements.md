@@ -347,8 +347,8 @@ na obou strojích, IP dle výpisu (`ip addr`/`ifconfig`!), MTU 200,
   chování CSMA při obousměrném provozu, ztrátovost na delší sérii.
 - **Orientace × SNR** — mikrofonní pole notebooku má patrně beamforming
   (citlivost mimo osu displeje klesá): po natočení RX notebooku ke zdroji
-  vyskočilo SNR o několik dB. Mini-měření: stejná hlasitost, několik úhlů
-  natočení, SNR/BER na 16-FSK.
+  vyskočilo SNR o několik dB. Kvalitativně pozorováno, systematické
+  měření vynecháno (rozhodnutí 2026-07-02).
 - **Matice vzdálenost × hlasitost** — systematické měření SNR/BER v
   závislosti na vzdálenosti reproduktor–mikrofon a nastavené hlasitosti,
   pro všechna čtyři schémata.

@@ -176,7 +176,7 @@ third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 | M5 | Další modulace: OOK, DBPSK, 16-FSK | hotovo |
 | M6 | Měření BER/FER na reálném kanálu (PRBS) | hotovo — obousměrná matice, BER 0 |
 | M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | hotovo — ping vzduchem, RTT ~13 s |
-| M8 | Závěrečná zpráva, doladění | výhled |
+| M8 | Závěrečná zpráva ([`docs/zprava.md`](docs/zprava.md)) | hotovo |
 
 ## Licence a kredity
 
