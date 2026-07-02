@@ -1,133 +1,185 @@
 # Akustický modem
 
-Školní projekt: přenos digitálních dat zvukem mezi dvěma zařízeními
-(reproduktor → vzduch → mikrofon), bez jakéhokoli kabelu nebo rádia.
-Cílem je ukázat celý řetězec od bitů přes modulaci, fyzickou vrstvu
-(synchronizační preambule, CRC) až po jednoduchou aplikační vrstvu
-(textové zprávy, případně přemostění Ethernetu přes `modem_tap`).
+> _[sem fotka/GIF: waterfall v `modem_gui` během přenosu, nebo dva notebooky
+> položené naproti sobě reproduktorem k mikrofonu]_
 
-Projekt vznikl jako semestrální práce, důraz je na čitelnost kódu a
-srozumitelnost architektury před maximálním výkonem.
+Přenos digitálních dat **zvukem** mezi dvěma běžnými počítači — reproduktor →
+vzduch → mikrofon, žádný kabel, žádné rádio. Projekt ukazuje celý řetězec
+komunikačního systému v malém: vyměnitelné modulace (2-FSK, OOK, DBPSK,
+16-FSK), rámce s CRC, chirp synchronizaci, měření chybovosti (BER/FER) a na
+vrcholu i přenos IP paketů nad zvukem (`modem_tap`, TUN/TAP rozhraní).
+Grafické rozhraní zobrazuje živé spektrum (waterfall), konstelační diagram a
+grafy kvality signálu.
 
-## Stavba
+Školní projekt, důraz je na čitelnost kódu a srozumitelnost architektury
+před maximálním výkonem.
 
-- **`modemcore`** — statická knihovna: DSP (chirp, Goertzel, simulace
-  kanálu), modulace/demodulace (2-FSK, později OOK/DBPSK/16-FSK),
-  protokol rámců (SYNC/HEADER/PAYLOAD/CRC), WAV I/O.
-- **`modem_cli`** — příkazová řádka: kódování textu do WAV, dekódování
-  WAV zpět na text, simulace akustického kanálu (šum, echo, drift hodin)
-  pro testování bez reálného mikrofonu/reproduktoru.
-- **`modem_tests`** — jednotkové a integrační testy (doctest).
-- **`modem_gui`** *(volitelné, vyžaduje SDL3)* — grafické rozhraní s
-  živým spektrem, konstelačním diagramem a grafy kvality signálu.
-- **`modem_tap`** *(volitelné, jen Linux)* — přemostění TAP síťového
-  rozhraní přes akustický modem (Ethernet rámce jako payload).
+## Rychlý start
 
-## Sestavení
-
-Na Fedoře je potřeba nainstalovat toolchain a (nepovinně) závislosti GUI:
+### Build na Fedoře
 
 ```sh
 sudo dnf install gcc-c++ cmake ninja-build SDL3-devel mesa-libGL-devel
+cmake -B ~/builds/acoustic-modem -S . -G Ninja
+cmake --build ~/builds/acoustic-modem
+ctest --test-dir ~/builds/acoustic-modem
 ```
 
-Konfigurace a sestavení (mimo zdrojový strom, adresář `build/`):
-
-```sh
-cmake -B build -G Ninja
-cmake --build build
-```
-
-Bez SDL3 (nebo bez `SDL3-devel`) se `modem_gui` automaticky vynechá —
-CMake to oznámí zprávou `message(STATUS ...)`, sestavení ostatních
-cílů to neovlivní.
-
-Spuštění testů:
-
-```sh
-ctest --test-dir build
-```
+Build adresář drž **mimo Dropbox** (`-B ~/builds/acoustic-modem`) —
+objektové soubory se mezi platformami stejně nepřenášejí. Bez `SDL3-devel`
+se `modem_gui` automaticky vynechá, ostatní cíle to neovlivní.
 
 ### Build na macOS
-
-Nejprve vývojářské nástroje Apple a poté toolchain přes Homebrew:
 
 ```sh
 xcode-select --install
 brew install cmake ninja sdl3
+cmake -B ~/builds/acoustic-modem -S . -G Ninja
+cmake --build ~/builds/acoustic-modem
 ```
 
-Konfigurace a sestavení jsou stejné jako na Linuxu:
+Při prvním `listen` macOS vyžádá oprávnění k mikrofonu (TCC) — bez potvrzení
+audio vstup nepůjde. `modem_gui` běží nad OpenGL 3.2 Core (jediný profil,
+který macOS pro GL nabízí). `modem_tap` na macOS používá `utun` (TUN, L3) —
+Ethernet TAP je jen na Linuxu.
+
+### Spuštění GUI
 
 ```sh
-cmake -B build -G Ninja
-cmake --build build
+~/builds/acoustic-modem/modem_gui
 ```
 
-Poznámky:
-
-- Při prvním spuštění `listen` (nebo čehokoli, co otevře mikrofon) macOS
-  zobrazí systémový dotaz na oprávnění k mikrofonu (TCC — Transparency,
-  Consent and Control). Je potřeba jej potvrdit, jinak audio vstup
-  nebude fungovat; oprávnění lze později spravovat v
-  Nastavení → Soukromí a bezpečnost → Mikrofon.
-- `modem_gui` na macOS běží nad SDL3 a OpenGL 3.2 Core profilem (macOS
-  jiný profil pro GL nenabízí) — `main_gui.cpp` si podle platformy sám
-  vybere správné atributy kontextu i verzi GLSL shaderů pro ImGui.
-- `modem_tap` je zatím jen pro Linux (používá TUN/TAP rozhraní jádra).
-  Podpora macOS (`utun` zařízení) je plánována na milník M7.
-
-## Použití CLI
-
-Zakódování textu do WAV souboru:
+### CLI — offline demo (bez mikrofonu/reproduktoru)
 
 ```sh
-build/modem_cli tx --text "Ahoj, svete!" --out tx.wav
+# text → WAV
+modem_cli tx --text "Ahoj, svete!" --out tx.wav
+
+# simulace akustického kanálu (šum, drift hodin, echo)
+modem_cli chansim --in tx.wav --out rx.wav --snr 15
+
+# WAV → text zpět
+modem_cli rx --in rx.wav
 ```
 
-Simulace přenosu akustickým kanálem (přidá šum, případně echo a drift
-hodin) bez nutnosti reálného reproduktoru/mikrofonu:
+### CLI — přenos mezi dvěma stroji živým zvukem
 
 ```sh
-build/modem_cli chansim --in tx.wav --out rx.wav --snr 15
+# na přijímací straně
+modem_cli listen --seconds 60
+
+# na vysílací straně
+modem_cli send --text "Ahoj z druheho stroje"
 ```
 
-Dekódování přijatého (nebo simulovaného) WAV souboru zpět na text:
+### CLI — měření BER pomocí PRBS
 
 ```sh
-build/modem_cli rx --in rx.wav
+# přijímač zapisuje i surový záznam pro pozdější offline analýzu
+modem_cli listen --scheme 16-FSK --seconds 120 --record prbs16.wav
+
+# vysílač: 8 rámců po 128 B známé PRBS-15 sekvence
+modem_cli send --prbs 8 --scheme 16-FSK
 ```
 
-Nápověda se všemi přepínači:
+`listen` u každého PRBS rámce vypíše `BER: chyby/bity`.
+
+### `modem_tap` — IP přes zvuk (vyžaduje sudo)
 
 ```sh
-build/modem_cli --help
+sudo modem_tap --mode tun --scheme 16-FSK
+# program vypíše přesný příkaz na nastavení IP/MTU, např.:
+#   sudo ip addr add 10.44.0.1/24 dev am0
+#   sudo ip link set am0 up
+#   sudo ip link set am0 mtu 200
+# na druhém stroji spusť totéž s 10.44.0.2, pak:
+ping 10.44.0.2
 ```
 
-Formát rámce a volba parametrů je popsána v [`docs/protocol.md`](docs/protocol.md).
+Doporučené MTU je **200 B** (payload rámce je omezen na 256 B). Přenos je
+best-effort — ztráty a přeuspořádání řeší vyšší vrstvy (ICMP/TCP), jako u
+běžného Ethernetu.
 
-## Struktura projektu
+## Modulace
+
+| Schéma | Princip | Bitů/symbol | Propustnost @ 31,25 Bd |
+|---|---|---|---|
+| **2-FSK** | bit → tón `f0`/`f1` | 1 | ≈ 31 bit/s |
+| **OOK** | bit 1 → nosná zapnuta, bit 0 → ticho | 1 | ≈ 31 bit/s |
+| **DBPSK** | bit → otočení fáze o 180° vůči předchozímu symbolu | 1 | ≈ 31 bit/s |
+| **16-FSK** | 16 ortogonálních tónů, Grayův kód | 4 | ≈ 125 bit/s |
+
+Všechna schémata sdílejí stejný formát rámce a stejnou fyzickou preambuli —
+podrobný rozbor parametrů a zdůvodnění voleb je v [`docs/protocol.md`](docs/protocol.md).
+
+## Signálový řetězec
+
+```mermaid
+flowchart LR
+    A[text / payload] --> B[Framer<br/>SYNC+HEADER+CRC]
+    B --> C[Modulátor<br/>2-FSK/OOK/DBPSK/16-FSK]
+    C --> D[reproduktor]
+    D --> E((vzduch))
+    E --> F[mikrofon]
+    F --> G[chirp sync<br/>ChirpCorrelator]
+    G --> H[Demodulátor]
+    H --> I[CRC-16 kontrola]
+    I --> J[text / payload]
+```
+
+Technický popis architektury (vlákna, stavové automaty, DSP volby) je v
+[`docs/architecture.md`](docs/architecture.md).
+
+## Ověřené výsledky
+
+Přenos mezi Fedorou a MacBookem vzduchem (vestavěné reproduktory/mikrofon,
+stejná místnost):
+
+- **2-FSK:** CRC OK, SNR ≈ 28 dB, korelace preambule 0,82.
+- **16-FSK:** BER **0/8192** přes 8 PRBS rámců, SNR ≈ 23–25 dB — čisté i
+  při 4× vyšší propustnosti.
+
+Podrobná metodika, kompletní tabulky a forenzní rozbor jedné anomálie
+(xrun na TX straně) jsou v [`docs/measurements.md`](docs/measurements.md).
+
+## Struktura repozitáře
 
 ```
 src/
-  core/       konfigurace, bitový proud, WAV I/O, SPSC ring buffer
+  core/       konfigurace, bitový proud, WAV I/O, SPSC ring buffer, PRBS-15
   dsp/        chirp, Goertzelův filtr, FIR, simulace kanálu
-  modem/      modulátory/demodulátory + registr schémat
-  protocol/   CRC-16, sestavení a příjem rámců
-  cli/        modem_cli (main_cli.cpp)
-  app/        modem_gui (plánováno)
-  net/        modem_tap (plánováno)
-tests/        jednotkové testy (doctest)
-docs/         specifikace protokolu
-third_party/  doctest, kissfft, imgui, implot, miniaudio
+  modem/      modulátory/demodulátory (2-FSK, OOK, DBPSK, 16-FSK) + registr
+  protocol/   CRC-16, sestavení rámců (Framer), příjem rámců (FrameReceiver)
+  link/       CSMA MAC (AcousticLink) a TUN/TAP zařízení pro modem_tap
+  audio/      obálka nad miniaudio (real-time I/O)
+  app/        modem_gui — DSP vlákno, waterfall, ImGui panely
+  net/        modem_tap — síťový mostík
+  cli/        modem_cli
+tests/        jednotkové a integrační testy (doctest)
+docs/         protokol, architektura, měření, spolupráce agentů
+sync/         koordinace mezi Linux a Mac agentem přes Dropbox (viz sync/README.md)
+third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 ```
 
 ## Stav milníků
 
 | Milník | Popis | Stav |
-|--------|-------|------|
-| M1 | Jádro: konfigurace, bity, WAV I/O, CRC-16, 2-FSK, rámce, CLI | probíhá |
-| M2 | Simulace kanálu, testovací sada (BER, chain testy) | plánováno |
-| M3 | Reálný zvukový vstup/výstup (miniaudio), `modem_tap` | plánováno |
-| M4 | GUI (ImGui/ImPlot): živé spektrum, konstelace, metriky | plánováno |
-| M5 | Další modulace: OOK, DBPSK, 16-FSK | plánováno |
+|---|---|---|
+| M1 | Jádro: konfigurace, bity, WAV I/O, CRC-16, 2-FSK, rámce, CLI | hotovo |
+| M2 | Simulace kanálu, testovací sada (BER, chain testy) | hotovo |
+| M3 | Reálný zvukový vstup/výstup (miniaudio) | hotovo |
+| M4 | GUI (ImGui/ImPlot): živé spektrum, konstelace, metriky | hotovo |
+| M5 | Další modulace: OOK, DBPSK, 16-FSK | hotovo |
+| M6 | Měření BER/FER na reálném kanálu (PRBS) | probíhá |
+| M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | kód hotový, ping demo zbývá |
+| M8 | Závěrečná zpráva, doladění | výhled |
+
+## Licence a kredity
+
+Vendorované knihovny v `third_party/` (nemodifikované, každá se svou licencí):
+
+- [**miniaudio**](https://miniaud.io/) — public domain / MIT-0
+- [**kissfft**](https://github.com/mborgerding/kissfft) — BSD-3-Clause
+- [**Dear ImGui**](https://github.com/ocornut/imgui) — MIT
+- [**ImPlot**](https://github.com/epezent/implot) — MIT
+- [**doctest**](https://github.com/doctest/doctest) — MIT
