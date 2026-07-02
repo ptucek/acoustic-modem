@@ -15,6 +15,7 @@
 #include "imgui_impl_opengl3_loader.h" // GL prototypy (glViewport, glClear, ...)
 #include "implot.h"
 
+#include "app/ui_font.hpp"
 #include "app/dsp_thread.hpp"
 #include "app/panels.hpp"
 #include "core/config.hpp"
@@ -169,6 +170,21 @@ int main(int argc, char** argv) {
     ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // České glyfy: výchozí font (ProggyClean) obsahuje jen ASCII + Latin-1,
+    // takže znaky s háčkem/kroužkem (ř č ž ě ů ň š ď ť …) z bloku Latin
+    // Extended-A chyběly a vykreslovaly se jako „?". Načteme proto zabudovaný
+    // font Roboto (Apache-2.0), který češtinu pokrývá. Font je vestavěný v
+    // binárce (base85) → stejné vykreslení na macOS i Linuxu bez závislosti na
+    // systémových fontech. Rozsah glyfů necháváme prázdný (nullptr) — ImGui
+    // 1.92+ rasterizuje glyfy on-demand, takže se natáhne cokoli z fontu.
+    ImFontConfig font_cfg;
+    font_cfg.OversampleH = 2;
+    font_cfg.OversampleV = 2;
+    if (io.Fonts->AddFontFromMemoryCompressedBase85TTF(
+            UiFont_compressed_data_base85, 16.0f, &font_cfg, nullptr) == nullptr) {
+        io.Fonts->AddFontDefault(); // nouzový fallback (bez českých glyfů)
+    }
 
     ImGui::StyleColorsDark();
 
