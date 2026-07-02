@@ -88,17 +88,21 @@ review (viz `docs/dva-agenti.md`).
 **FER 0/8, celkové BER 0/8192.** 16-FSK je při SNR ~23–25 dB zcela čisté i
 při 4× vyšší propustnosti než 2-FSK.
 
-**2-FSK — `send --prbs 3` (3 rámce à 128 B):**
+**2-FSK — `send --prbs 2` (2 rámce à 128 B):**
 
 | Rámec | CRC | SNR (dB) | BER |
 |---|---|---|---|
 | 1 | FAIL | 23,3 | 436/1024 = 0,426 |
 | 2 | OK | 31,8 | 0/1024 |
-| 3 | — nenalezen — | | |
 
-**FER 2/3.** BER 0,426 u rámce #1 odpovídá prakticky náhodným datům, což
+**FER 1/2.** BER 0,426 u rámce #1 odpovídá prakticky náhodným datům, což
 při SNR 23 dB není vysvětlitelné šumem — ukazuje na ztrátu zarovnání
 symbolových hodin, ne na chybu jednotlivých bitů.
+
+*Pozn. (oprava z rána 2026-07-02):* přijímací strana původně čekala tři
+rámce a reportovala „rámec #3 nenalezen“ — ráno se z TX logu ukázalo, že
+před nočním přerušením byly odvysílány jen **dva** rámce. Třetí rámec tedy
+nebyl ztracen kanálem ani přijímačem; skóre výše je opravené.
 
 #### Forenzní analýza rámce #1 (BER 0,43)
 
@@ -124,11 +128,11 @@ potvrzuje diagnózu.
 Offline re-analýza zaznamenaného signálu (`prbs2-mac.wav`,
 `modem_cli rx --in prbs2-mac.wav --scheme 2-FSK`) dala identický výsledek
 (2 rámce, #1 FAIL, #2 OK) — poškození bylo už v zachyceném signálu, ne
-v chování live přijímače nad ním. To zároveň ukázalo na druhou souvislost:
-chování při ztrátě/posunu symbolů uprostřed proudu je přesně scénář, který
-odhalilo souběžné review kódu `FrameReceiver` (obnova po falešně
-zamčené/přerušené preambuli, popsáno v `docs/architecture.md`) — třetí,
-zcela ztracený rámec je s touto hypotézou konzistentní.
+v chování live přijímače nad ním. Ranní ověření opraveným `FrameReceiver`
+(obnova po falešně zamčené/přerušené preambuli, popsáno v
+`docs/architecture.md`) na témže záznamu dává rovněž 2 rámce — v nahrávce
+žádný falešný lock není a oprava tuto vlastnost kryje samostatným regresním
+testem, nikoli tímto měřením.
 
 **Ponaučení:**
 
@@ -144,27 +148,106 @@ zcela ztracený rámec je s touto hypotézou konzistentní.
 3. BER matice pro 2-FSK se plánuje přeměřit v klidu, bez souběžné zátěže
    na vysílacím stroji.
 
+### PRBS BER měření #2 — Linux → Mac, dopoledne 2026-07-02
+
+Stejné podmínky (stejná místnost, hlasitost ~70 %), tentokrát **bez
+souběžné zátěže na vysílacím stroji** (poučení z xrunu výše). Naslouchací
+okna 240 s.
+
+**DBPSK — 3 rámce à 128 B:**
+
+| Rámec | CRC | SNR (dB) | BER |
+|---|---|---|---|
+| 1 | OK | 18,5 | 0/1024 |
+| 2 | OK | 20,0 | 0/1024 |
+| 3 | OK | 18,5 | 0/1024 |
+
+**FER 0/3, BER 0/3072** — čisté i při SNR o ~5 dB nižším, než měla noční
+16-FSK měření.
+
+**OOK — 3 rámce à 128 B:**
+
+| Rámec | CRC | SNR (dB) | BER |
+|---|---|---|---|
+| 1 | OK | 21,6 | 0/1024 |
+| 2 | OK | 21,7 | 0/1024 |
+| 3 | OK | 22,3 | 0/1024 |
+
+**FER 0/3, BER 0/3072.**
+
+Metodické poznámky z tohoto kola:
+
+1. **Velikost naslouchacího okna:** u schémat s 1 bit/symbol trvá jeden
+   128B rámec ~36 s; okno 150 s nestačí na handshake (Dropbox latence
+   v řádu jednotek až desítek sekund) + 3 rámce s mezerami — první běh
+   DBPSK stihl jen rámec #1 (CRC OK, BER 0/1024, SNR 19,0 dB; do statistik
+   výše nezapočten). Pro pomalá schémata používáme okno **240 s**.
+2. **Limit TX bufferu:** `send --prbs 3` u 1bit/symbol schémat překročí
+   kapacitu výstupního ring bufferu (5,1 M > 4,19 M vzorků) a od
+   zapracování oprav z code review korektně **odmítne vysílat** místo
+   tichého oříznutí. Tři rámce se proto vysílají jako `--prbs 2` +
+   `--prbs 1` bezprostředně za sebou (mezera ~2 s navíc mezi rámci #2
+   a #3 — na BER/rámec nemá vliv).
+
+**2-FSK retest (3. běh, okno 300 s):**
+
+| Rámec | CRC | SNR (dB) | BER |
+|---|---|---|---|
+| 1 | OK | 40,0–41,4 | 0/1024 |
+| 2 | OK | 40,0–41,4 | 0/1024 |
+| 3 | OK | 40,0–41,4 | 0/1024 |
+
+**FER 0/3, BER 0/3072.** Tím je matice Linux → Mac kompletní a noční
+FER 1/2 u 2-FSK definitivně přisouzen TX xrunu, nikoli modemu.
+
+Cestou k tomu výsledku vyšla třetí metodická poznámka: 2. běh retestu
+zachytil jen 1 rámec (čistý, SNR 32,4 dB), protože vysílání začalo až
+~186 s po otevření 240s okna — latence propagace handshake statusu přes
+Dropbox je proměnná v řádu až minut a okno musí krýt nejhorší případ
+(od té doby 300 s), případně handshake vést jiným kanálem.
+
 ### Souhrn dosavadních měření
 
-| Schéma | FER | BER (z přijatých rámců) | SNR |
-|---|---|---|---|
-| 16-FSK | 0/8 | 0/8192 | 23,2–24,7 dB |
-| 2-FSK | 2/3 (1× xrun, 1× ztracen) | 0/1024 (jediný čistý rámec) | 23–32 dB |
-| DBPSK | — | — | měření zatím neproběhlo |
-| OOK | — | — | měření zatím neproběhlo |
+| Schéma | FER | BER (z přijatých rámců) | SNR | Kolo |
+|---|---|---|---|---|
+| 16-FSK | 0/8 | 0/8192 | 23,2–24,7 dB | #1 (noc) |
+| DBPSK | 0/3 | 0/3072 | 18,5–20,0 dB | #2 (dopoledne) |
+| OOK | 0/3 | 0/3072 | 21,6–22,3 dB | #2 (dopoledne) |
+| 2-FSK | 0/3 | 0/3072 | 40,0–41,4 dB | #2 (retest; kolo #1: FER 1/2 kvůli TX xrunu) |
+
+### Směr Mac → Linux — nález: hlasové DSP v capture cestě (probíhá)
+
+První pokus o opačný směr (16-FSK, 3 rámce) skončil **0 nalezenými rámci**,
+přestože záznam vysílání obsahoval — a vedl k nálezu, který stojí za
+zdokumentování jako samostatné ponaučení:
+
+Výchozím nahrávacím zařízením na Fedoře byl **mikrofon webkamery**
+(konferenční kamera Cisco) s vestavěným hlasovým DSP (AGC, potlačení
+šumu, echo cancellation). Takový řetězec ničí přesně to, na čem modem
+stojí: **transientní preambule projde** (warmup tón i chirp jsou v
+záznamu vidět), ale **stacionární FSK tóny potlačovač šumu průběžně
+„odečítá"** — amplituda pumpuje 5–15×, spektrum datové části je rozmazané
+mimo tónovou mřížku a korelace chirpu klesne z obvyklých ~0,8 na ~0,09.
+Selhání se projeví jako „vysílání je slyšet, ale receiver nikdy nezamkne".
+
+Po přepnutí na vestavěný mikrofon (bez DSP) tentýž směr okamžitě funguje
+(lokální ověření: CRC OK, SNR 30,8 dB; první rámce z macu: BER ~2 % při
+SNR 13,4 dB — nízká úroveň, ladí se hlasitost/zisk, chybové pozice se mezi
+rámci opakují ⇒ frekvenčně selektivní útlum cesty, ne šum).
+
+**Ponaučení: před měřením vždy ověřit capture cestu lokálním loopback
+testem vzduchem** — a nepoužívat „chytrá" konferenční zařízení.
+Související opravy v CLI: `--device` přijímá i část jména zařízení
+(indexy se přeskupují, když se objeví/ztratí síťová zařízení typu
+AirPlay) a `listen` má 5s watchdog na zařízení, které nedodává vzorky.
 
 ## Plánovaná měření
 
-- **DBPSK a OOK** — PRBS BER měření analogicky k výše uvedeným (okno bylo
-  otevřeno, ale přerušeno nočním klidem před dokončením).
-- **Opakování 2-FSK** bez souběžné zátěže na vysílacím stroji, s opraveným
-  `FrameReceiver` (viz `docs/architecture.md`) na obou stranách.
+- **Dokončení Mac → Linux** — po vyladění úrovně (hlasitost mac /
+  mic gain Fedora) celá matice 16-FSK, 2-FSK, DBPSK, OOK.
 - **Matice vzdálenost × hlasitost** — systematické měření SNR/BER v
   závislosti na vzdálenosti reproduktor–mikrofon a nastavené hlasitosti,
   pro všechna čtyři schémata.
-- **Směr Mac → Linux** — dosavadní měření šla jen jedním směrem; opačný
-  směr ověří, že výsledky nejsou artefaktem konkrétní zvukové cesty jednoho
-  stroje.
 - **`modem_tap` ping** — end-to-end ICMP přes akustický kanál; vyžaduje
   `sudo` na obou strojích současně, tedy koordinaci s uživatelem (viz
   `docs/dva-agenti.md`).

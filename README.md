@@ -138,6 +138,8 @@ stejná místnost):
 - **2-FSK:** CRC OK, SNR ≈ 28 dB, korelace preambule 0,82.
 - **16-FSK:** BER **0/8192** přes 8 PRBS rámců, SNR ≈ 23–25 dB — čisté i
   při 4× vyšší propustnosti.
+- **DBPSK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 18,5–20 dB.
+- **OOK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 21,6–22,3 dB.
 
 Podrobná metodika, kompletní tabulky a forenzní rozbor jedné anomálie
 (xrun na TX straně) jsou v [`docs/measurements.md`](docs/measurements.md).

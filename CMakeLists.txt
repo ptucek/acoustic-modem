@@ -91,6 +91,7 @@ add_executable(modem_tests
     tests/test_frame.cpp
     tests/test_prbs.cpp
     tests/test_link.cpp
+    tests/test_device_select.cpp
 )
 target_link_libraries(modem_tests PRIVATE modemcore)
 

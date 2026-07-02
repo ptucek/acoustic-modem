@@ -14,6 +14,7 @@
 #include <csignal>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -55,16 +56,18 @@ void printUsage() {
         "      Simuluje akustický kanál (šum, drift hodin, útlum, echo).\n"
         "\n"
         "  modem_cli send --text \"zpráva\" [--scheme 2-FSK] [--baud 31.25]\n"
-        "                 [--f0 1200 --f1 2200] [--amp 0.5] [--device N]\n"
+        "                 [--f0 1200 --f1 2200] [--amp 0.5] [--device N|jméno]\n"
         "      Odešle text živě přes zvukovou kartu (reproduktor).\n"
         "\n"
         "  modem_cli listen [--scheme 2-FSK] [--baud 31.25] [--f0 1200 --f1 2200]\n"
-        "                   [--device N] [--seconds S]\n"
+        "                   [--device N|jméno] [--seconds S]\n"
         "      Naslouchá mikrofonu a vypisuje přijaté rámce. Ctrl+C ukončí.\n"
         "\n"
         "  modem_cli devices\n"
         "      Vypíše dostupná zvuková zařízení (přehrávání i nahrávání).\n"
         "      Přepínač --list-devices funguje i u send/listen samostatně.\n"
+        "      --device bere index, nebo část jména (jméno je stabilnější —\n"
+        "      indexy se přeskupují, když se objeví/ztratí síťová zařízení).\n"
         "\n"
         "  modem_cli --help\n"
         "      Vypíše tuto nápovědu.\n";
@@ -452,6 +455,32 @@ std::string levelBar(float level, int width = 20) {
     return bar;
 }
 
+// Převede hodnotu --device (index, nebo část jména zařízení) na index pro
+// AudioEngine::start(). Jméno musí odpovídat právě jednomu zařízení daného
+// směru — enumerace proběhne na témže enginu, který pak volá start(), takže
+// index sedí na uložená ID i při přeskupení seznamu mezi procesy.
+std::optional<int> resolveDeviceArg(am::AudioEngine& engine, const std::string& spec,
+                                    bool capture, const char* cmd) {
+    const auto devices = engine.enumerate();
+    const auto hits = am::matchDevices(devices, spec, capture);
+    if (hits.size() == 1) return hits.front();
+
+    const char* kind = capture ? "nahrávacímu (capture)" : "přehrávacímu (playback)";
+    if (hits.empty()) {
+        std::cerr << cmd << ": --device \"" << spec << "\" neodpovídá žádnému "
+                   << kind << " zařízení — viz \"modem_cli devices\"\n";
+        return std::nullopt;
+    }
+    std::cerr << cmd << ": --device \"" << spec << "\" není jednoznačné, odpovídá:\n";
+    for (const auto& d : devices) {
+        if (d.is_capture == capture &&
+            std::find(hits.begin(), hits.end(), d.index) != hits.end()) {
+            std::cerr << "  [" << d.index << "] " << d.name << "\n";
+        }
+    }
+    return std::nullopt;
+}
+
 const char* stateName(am::FrameReceiver::State s) {
     switch (s) {
         case am::FrameReceiver::State::SearchPreamble: return "hledani preambule";
@@ -479,7 +508,7 @@ int cmdSend(Args& args) {
     ModemConfig cfg;
     applyCommonConfig(args, cfg);
     if (auto v = args.getDouble("--amp")) cfg.amplitude = *v;
-    std::optional<int> device_index = args.getInt("--device");
+    std::optional<std::string> device_spec = args.get("--device");
     if (!validateConfig(cfg)) return 1;
 
     if (!text && !prbs_count) {
@@ -534,7 +563,12 @@ int cmdSend(Args& args) {
     }
 
     am::AudioEngine engine;
-    int playback_index = device_index.value_or(-1);
+    int playback_index = -1;
+    if (device_spec) {
+        auto resolved = resolveDeviceArg(engine, *device_spec, /*capture=*/false, "send");
+        if (!resolved) return 1;
+        playback_index = *resolved;
+    }
     // Capture se vůbec neotevírá — čisté vysílání nepotřebuje mikrofon a na
     // macOS by si jinak vyžádalo TCC oprávnění, i když se nic nenahrává.
     if (!engine.start(am::kNoDevice, playback_index, cfg.sample_rate, rx_ring, tx_ring)) {
@@ -608,7 +642,7 @@ int cmdListen(Args& args) {
 
     ModemConfig cfg;
     applyCommonConfig(args, cfg);
-    std::optional<int> device_index = args.getInt("--device");
+    std::optional<std::string> device_spec = args.get("--device");
     std::optional<double> seconds = args.getDouble("--seconds");
     if (!validateConfig(cfg)) return 1;
 
@@ -633,7 +667,12 @@ int cmdListen(Args& args) {
     am::SpscRing<float> tx_ring(1u << 12); // nepoužitý pro RX, ale start() jej vyžaduje
 
     am::AudioEngine engine;
-    int capture_index = device_index.value_or(-1);
+    int capture_index = -1;
+    if (device_spec) {
+        auto resolved = resolveDeviceArg(engine, *device_spec, /*capture=*/true, "listen");
+        if (!resolved) return 1;
+        capture_index = *resolved;
+    }
     // Playback se vůbec neotevírá — čistý příjem nepotřebuje reproduktor.
     if (!engine.start(capture_index, am::kNoDevice, cfg.sample_rate, rx_ring, tx_ring)) {
         std::cerr << "listen: nepodařilo se spustit zvukové zařízení "
@@ -656,6 +695,12 @@ int cmdListen(Args& args) {
 
     const auto start_time = std::chrono::steady_clock::now();
     auto last_status = start_time;
+
+    // Watchdog: zařízení, které nedodává vzorky (zaseknutý ovladač, mrtvý
+    // monitor síťového sinku), by jinak nechalo listen tvářit se, že měří.
+    constexpr auto kStallTimeout = std::chrono::seconds(5);
+    auto last_samples_time = start_time;
+    bool stalled = false;
 
     while (!g_interrupted.load(std::memory_order_relaxed)) {
         if (seconds) {
@@ -709,6 +754,13 @@ int cmdListen(Args& args) {
         }
 
         auto now = std::chrono::steady_clock::now();
+        if (got > 0) {
+            last_samples_time = now;
+        } else if (now - last_samples_time >= kStallTimeout) {
+            stalled = true;
+            break;
+        }
+
         if (std::chrono::duration<double>(now - last_status).count() >= 0.5) {
             float peak = engine.inputPeak();
             std::cerr << "\rlevel [" << levelBar(peak) << "] "
@@ -719,10 +771,10 @@ int cmdListen(Args& args) {
         }
     }
 
-    engine.stop();
-    std::signal(SIGINT, SIG_DFL);
-
-    if (record_path) {
+    // Výsledky a záznam se zpracují PŘED engine.stop(): uninit zaseknutého
+    // zařízení (ověřeno s PipeWire monitorem AirPlay sinku) umí blokovat
+    // donekonečna a spolkl by i to, co se stihlo přijmout.
+    if (record_path && !recording.empty()) {
         if (am::writeWav(*record_path, recording, cfg.sample_rate))
             std::cerr << "\nlisten: zaznam ulozen do " << *record_path << " ("
                        << recording.size() / size_t(cfg.sample_rate) << " s)\n";
@@ -733,8 +785,21 @@ int cmdListen(Args& args) {
     std::cerr << "\nlisten: ukonceno, nalezeno ramcu: " << frame_count << "\n";
     // exit kody: 0 = aspon jeden validni ramec, 2 = ramce jen s vadnym CRC,
     // 1 = zadny ramec (pro skriptovani a mereni)
-    if (any_ok) return 0;
-    return frame_count > 0 ? 2 : 1;
+    const int exit_code = any_ok ? 0 : (frame_count > 0 ? 2 : 1);
+
+    if (stalled) {
+        std::cerr << "listen: chyba — zvukové zařízení nedodalo žádné vzorky "
+                   << std::chrono::duration_cast<std::chrono::seconds>(kStallTimeout).count()
+                   << " s; ukončuji bez čekání na ovladač (zkontroluj --device)\n";
+        std::cout.flush();
+        // _Exit záměrně přeskočí destruktory: engine.stop() by na mrtvém
+        // zařízení mohl viset a proces by nešel ukončit jinak než killem.
+        std::_Exit(frame_count > 0 ? exit_code : 1);
+    }
+
+    engine.stop();
+    std::signal(SIGINT, SIG_DFL);
+    return exit_code;
 }
 
 // ---------------------------------------------------------------------------

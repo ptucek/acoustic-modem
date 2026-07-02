@@ -3,7 +3,11 @@
 // kopíruje vzorky mezi zařízením a lock-free ring buffery — žádné zámky,
 // žádné alokace, žádné DSP (to patří do DSP vlákna).
 
+#include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/spsc_ring.hpp"
@@ -15,6 +19,44 @@ struct DeviceInfo {
     bool is_capture = false;
     int  index = -1; // index v rámci enumerate() daného směru
 };
+
+// Převod hodnoty --device na kandidátní indexy zařízení daného směru.
+// Celé nezáporné číslo se bere přímo jako index, cokoli jiného jako
+// case-insensitivní podřetězec jména. Jméno je preferovaný způsob výběru:
+// pořadí enumerace NENÍ mezi běhy stabilní (síťová zařízení typu AirPlay
+// se objevují a mizí a posouvají indexy ostatních), obsah jména ano.
+// Prázdná specifikace nevrací nic. Víc shod = nejednoznačnost, rozhodnutí
+// (chyba + výpis kandidátů) je na volajícím.
+inline std::vector<int> matchDevices(const std::vector<DeviceInfo>& devices,
+                                     std::string_view spec, bool capture) {
+    std::vector<int> hits;
+    if (spec.empty()) return hits;
+
+    const bool numeric = std::all_of(spec.begin(), spec.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+    });
+    if (numeric) {
+        int idx = -1;
+        auto [ptr, ec] = std::from_chars(spec.data(), spec.data() + spec.size(), idx);
+        if (ec != std::errc{} || ptr != spec.data() + spec.size()) return hits;
+        for (const auto& d : devices)
+            if (d.is_capture == capture && d.index == idx) hits.push_back(d.index);
+        return hits;
+    }
+
+    auto lower = [](std::string_view s) {
+        std::string out(s);
+        std::transform(out.begin(), out.end(), out.begin(),
+                       [](unsigned char c) { return char(std::tolower(c)); });
+        return out;
+    };
+    const std::string needle = lower(spec);
+    for (const auto& d : devices) {
+        if (d.is_capture != capture) continue;
+        if (lower(d.name).find(needle) != std::string::npos) hits.push_back(d.index);
+    }
+    return hits;
+}
 
 // Speciální hodnota pro capture_index/playback_index u AudioEngine::start():
 // daný směr se vůbec neotevře (žádné zařízení, žádné oprávnění OS). Použití:
