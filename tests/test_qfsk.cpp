@@ -33,8 +33,8 @@ std::vector<uint8_t> randomPayload(size_t n, uint32_t seed) {
 
 std::optional<am::FrameReceiver::Result>
 runChain(std::span<const uint8_t> payload, const am::ChannelParams& ch,
-         const am::ModemConfig& cfg) {
-    const auto& scheme = *am::findScheme("Q-FSK");
+         const am::ModemConfig& cfg, const char* scheme_name = "Q-FSK") {
+    const auto& scheme = *am::findScheme(scheme_name);
     auto mod = scheme.makeMod();
     mod->configure(cfg);
     auto tx = am::Framer::buildFrame(payload, *mod, cfg);
@@ -104,6 +104,61 @@ TEST_CASE("Q-FSK: přežije šum a drift hodin") {
             ch.drift_ppm = drift;
             ch.seed      = uint32_t(2000 + snr * 10 + drift);
             auto r = runChain(payload, ch, qfskCfg());
+            REQUIRE(r.has_value());
+            CHECK(r->crc_ok);
+            CHECK(r->payload == payload);
+        }
+    }
+}
+
+// ---- W-FSK: 11 skupin (G1–G11), 44 b/symbol → 2,75 kbit/s @ 62,5 Bd -------
+// Wideband varianta Q-FSK: přidává G5–G11 nad 7240 Hz (VF sondáž macu).
+// Klíčové: 44 b/symbol > 32 → symbolová cesta musí být uint64_t (jinak by
+// přetekla hodnota symbolu i pushBits ve FrameReceiveru).
+
+TEST_CASE("W-FSK: 44 bitů/symbol (11 skupin × 4 bity)") {
+    const auto& scheme = *am::findScheme("W-FSK");
+    const am::ModemConfig c = qfskCfg();
+    auto mod = scheme.makeMod();
+    mod->configure(c);
+    CHECK(mod->bitsPerSymbol() == 44);
+    auto demod = scheme.makeDemod();
+    demod->configure(c);
+    CHECK(demod->bitsPerSymbol() == 44);
+}
+
+TEST_CASE("W-FSK: propustnost 2,75 kbit/s @ 62,5 Bd") {
+    const am::ModemConfig c = qfskCfg();
+    auto mod = am::findScheme("W-FSK")->makeMod();
+    mod->configure(c);
+    CHECK(mod->bitsPerSymbol() * c.baud == doctest::Approx(2750.0));
+}
+
+TEST_CASE("W-FSK: čistý round-trip max payload (framing bps=44 > 32 b)") {
+    // Regrese na uint64_t symbolovou cestu: 44 b/symbol nedělí 8 ani se
+    // nevejde do uint32_t. Ověřuje bit-přesný přenos i zarovnání polí.
+    const auto payload = randomPayload(size_t(am::kMaxPayload), 314);
+    auto r = runChain(payload, {}, qfskCfg(), "W-FSK");
+    REQUIRE(r.has_value());
+    CHECK(r->crc_ok);
+    CHECK(r->payload == payload);
+}
+
+TEST_CASE("W-FSK: přežije šum a drift hodin") {
+    // 11 tónů současně → každý cfg.amplitude/11 (−8,8 dB/tón vs Q-FSK /4),
+    // proto testujeme od realistického SNR (wideband = vyšší propustnost
+    // výměnou za nižší odolnost; generický 8 dB chain test drží dohromady
+    // s procesním ziskem Goertzelu).
+    const auto payload = randomPayload(96, 271);
+    for (double snr : {30.0, 20.0}) {
+        for (double drift : {0.0, 50.0, -50.0}) {
+            CAPTURE(snr);
+            CAPTURE(drift);
+            am::ChannelParams ch;
+            ch.snr_db    = snr;
+            ch.drift_ppm = drift;
+            ch.seed      = uint32_t(3000 + snr * 10 + drift);
+            auto r = runChain(payload, ch, qfskCfg(), "W-FSK");
             REQUIRE(r.has_value());
             CHECK(r->crc_ok);
             CHECK(r->payload == payload);

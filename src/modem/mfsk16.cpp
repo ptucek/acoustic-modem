@@ -80,7 +80,7 @@ public:
     int  bitsPerSymbol() const override { return bits_per_sym_; }
     void reset() override {}
 
-    uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
+    uint64_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
         float best = -1.f, second = 0.f;
         size_t best_k = 0;
         std::vector<float> energies(gs_.size());

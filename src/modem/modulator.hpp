@@ -46,8 +46,9 @@ public:
 
     // `sym` má přesně ModemConfig::samplesPerSymbol() vzorků, časově
     // zarovnaných FrameReceiverem. Vrací bitsPerSymbol() bitů (LSB první).
+    // Návratový typ uint64_t → schémata s >32 b/symbol (W-FSK: 44 b).
     // `diag` může být nullptr (offline testy).
-    virtual uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) = 0;
+    virtual uint64_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) = 0;
 };
 
 // Registr schémat — plní combo box v GUI a --scheme v CLI.

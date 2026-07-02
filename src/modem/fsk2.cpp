@@ -56,7 +56,7 @@ public:
     int  bitsPerSymbol() const override { return 1; }
     void reset() override {}
 
-    uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
+    uint64_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
         const float e0 = Goertzel::energy(g0_.run(sym));
         const float e1 = Goertzel::energy(g1_.run(sym));
         const bool bit = e1 > e0;

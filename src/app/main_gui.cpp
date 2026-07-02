@@ -28,8 +28,8 @@ void printGuiUsage() {
         "modem_gui — GUI akustického modemu\n\n"
         "Použití: modem_gui [--scheme NÁZEV] [--baud N] [--sample-rate N]\n"
         "                   [--f0 N] [--f1 N] [--amp N]\n\n"
-        "  --scheme  2-FSK | OOK | DBPSK | 16-FSK | Q-FSK  (výchozí 2-FSK)\n"
-        "  --baud    symbolová rychlost v Bd (Q-FSK výchozí 62.5, jinak 31.25)\n"
+        "  --scheme  2-FSK | OOK | DBPSK | 16-FSK | Q-FSK | W-FSK  (výchozí 2-FSK)\n"
+        "  --baud    symbolová rychlost v Bd (Q-FSK/W-FSK výchozí 62.5, jinak 31.25)\n"
         "  --f0/--f1 tóny 2-FSK/nosná (Hz); --amp amplituda 0..1\n"
         "  Vše lze měnit i za běhu v ovládacím panelu GUI.\n");
 }
@@ -102,9 +102,11 @@ bool parseGuiArgs(int argc, char** argv, am::ModemConfig& cfg, int& scheme_index
     }
     scheme_index = idx;
 
-    // Q-FSK je navržená pro 62,5 Bd (4×16-FSK = 1 kbit/s); ostatní jedou na
-    // 31,25 Bd. Výchozí baud podle schématu, explicitní --baud ho přebije.
-    if (!baud_set && scheme_name == "Q-FSK") cfg.baud = 62.5;
+    // Q-FSK (4 skupiny) i W-FSK (11 skupin) jsou navržené pro 62,5 Bd;
+    // ostatní jedou na 31,25 Bd. Výchozí baud podle schématu, explicitní
+    // --baud ho přebije.
+    if (!baud_set && (scheme_name == "Q-FSK" || scheme_name == "W-FSK"))
+        cfg.baud = 62.5;
 
     if (!(cfg.baud > 0.0) || cfg.baud > double(cfg.sample_rate) / 16.0) {
         std::fprintf(stderr,

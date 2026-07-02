@@ -42,11 +42,11 @@ public:
 
     // Volitelný hook: zavolá se po každém demodulovaném symbolu (živá
     // chybovost, konstelace). Volá se z DSP vlákna.
-    std::function<void(const SymbolDiag&, uint32_t bits)> onSymbol;
+    std::function<void(const SymbolDiag&, uint64_t bits)> onSymbol;
 
 private:
     void processBuffered();
-    bool takeSymbol(uint32_t& bits_out); // false = zatím není dost vzorků
+    bool takeSymbol(uint64_t& bits_out); // false = zatím není dost vzorků
     void restartSearch(size_t keep_from);
 
     ModemConfig cfg_;

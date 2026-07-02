@@ -17,6 +17,7 @@ constexpr ModemScheme kSchemes[] = {
     { "DBPSK",  &makeDbpskMod,  &makeDbpskDemod },
     { "16-FSK", &makeMfsk16Mod, &makeMfsk16Demod },
     { "Q-FSK",  &makeQfskMod,   &makeQfskDemod },
+    { "W-FSK",  &makeWfskMod,   &makeWfskDemod },
 };
 
 } // namespace

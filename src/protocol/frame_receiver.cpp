@@ -57,7 +57,7 @@ std::optional<FrameReceiver::Result> FrameReceiver::poll() {
     return r;
 }
 
-bool FrameReceiver::takeSymbol(uint32_t& bits_out) {
+bool FrameReceiver::takeSymbol(uint64_t& bits_out) {
     const size_t sps = size_t(cfg_.samplesPerSymbol());
     if (read_pos_ + sps > buf_.size()) return false;
     bits_out = demod_->demodSymbol({buf_.data() + read_pos_, sps}, &last_diag_);
@@ -124,7 +124,7 @@ void FrameReceiver::processBuffered() {
             state_ = State::Sync;
         }
 
-        uint32_t sym_bits = 0;
+        uint64_t sym_bits = 0;
         if (!takeSymbol(sym_bits)) break; // čekáme na další vzorky
         rx_bits_.pushBits(sym_bits, bps);
 

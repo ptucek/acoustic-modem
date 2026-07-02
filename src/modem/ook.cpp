@@ -72,7 +72,7 @@ public:
         off_avg_ = 0.f;
     }
 
-    uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
+    uint64_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
         // Dozvuk místnosti: po ON symbolu nosná doznívá desítky ms a přelévá
         // se do začátku následujícího symbolu — izolovaná nula po jedničce
         // pak z celého okna vyjde nad prahem a čte se jako jednička (reálně

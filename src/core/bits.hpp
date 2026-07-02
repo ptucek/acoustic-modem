@@ -16,7 +16,7 @@ public:
     void pushBit(bool b) { bits_.push_back(b ? 1 : 0); }
 
     // n nejnižších bitů hodnoty v, LSB první
-    void pushBits(uint32_t v, int n) {
+    void pushBits(uint64_t v, int n) {
         for (int i = 0; i < n; ++i) pushBit((v >> i) & 1u);
     }
 
@@ -29,10 +29,11 @@ public:
     size_t size() const { return bits_.size(); }
     bool   empty() const { return bits_.empty(); }
 
-    // i-tá skupina n bitů jako číslo (pro M-ární modulace), LSB první
-    uint32_t symbol(size_t i, int n) const {
-        uint32_t v = 0;
-        for (int k = 0; k < n; ++k) v |= uint32_t(bits_[i * n + k]) << k;
+    // i-tá skupina n bitů jako číslo (pro M-ární modulace), LSB první.
+    // Návratový typ uint64_t → schémata s >32 b/symbol (W-FSK: 44 b).
+    uint64_t symbol(size_t i, int n) const {
+        uint64_t v = 0;
+        for (int k = 0; k < n; ++k) v |= uint64_t(bits_[i * n + k]) << k;
         return v;
     }
 

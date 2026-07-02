@@ -83,7 +83,7 @@ public:
     int  bitsPerSymbol() const override { return 1; }
     void reset() override { prev_ = {0.f, 0.f}; }
 
-    uint32_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
+    uint64_t demodSymbol(std::span<const float> sym, SymbolDiag* diag) override {
         const std::complex<float> c = g_.run(sym);
         const std::complex<float> d = c * std::conj(prev_) * rot_;
         const bool bit = d.real() < 0.f; // otočení fáze → bit 1

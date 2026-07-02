@@ -6,7 +6,7 @@
 Přenos digitálních dat **zvukem** mezi dvěma běžnými počítači — reproduktor →
 vzduch → mikrofon, žádný kabel, žádné rádio. Projekt ukazuje celý řetězec
 komunikačního systému v malém: vyměnitelné modulace (2-FSK, OOK, DBPSK,
-16-FSK, Q-FSK), rámce s CRC, chirp synchronizaci, měření chybovosti (BER/FER) a na
+16-FSK, Q-FSK, W-FSK), rámce s CRC, chirp synchronizaci, měření chybovosti (BER/FER) a na
 vrcholu i přenos IP paketů nad zvukem (`modem_tap`, TUN/TAP rozhraní).
 Grafické rozhraní zobrazuje živé spektrum (waterfall), konstelační diagram a
 grafy kvality signálu.
@@ -109,6 +109,7 @@ běžného Ethernetu.
 | **DBPSK** | bit → otočení fáze o 180° vůči předchozímu symbolu | 1 | ≈ 31 bit/s @ 31,25 Bd |
 | **16-FSK** | 16 ortogonálních tónů, Grayův kód | 4 | ≈ 125 bit/s @ 31,25 Bd |
 | **Q-FSK** | 4 paralelní 16-FSK skupiny (G1–G4) v pásmech mimo dozvukové zářezy | 16 | ≈ **1000 bit/s @ 62,5 Bd** |
+| **W-FSK** | 11 paralelních 16-FSK skupin (G1–G11, ~1–16 kHz) — Q-FSK + G5–G11 | 44 | ≈ **2750 bit/s @ 62,5 Bd** |
 
 Všechna schémata sdílejí stejný formát rámce a stejnou fyzickou preambuli —
 podrobný rozbor parametrů a zdůvodnění voleb je v [`docs/protocol.md`](docs/protocol.md).
@@ -120,6 +121,18 @@ leží mezi frekvenčně selektivními zářezy od dozvuku místnosti. 16 bitů 
 symbol × 62,5 Bd dává **8× propustnost 16-FSK**. Běží na 62,5 Bd
 automaticky (`--baud` volbu lze přebít). Amplituda každého tónu je 1/4
 nastavené, aby součet čtyř tónů neklipoval.
+
+**W-FSK** (wideband) rozšiřuje Q-FSK o dalších sedm skupin nad 7240 Hz
+(G5 7500, G6 8750, G7 10000, G8 11250, G9 12500, G10 13750, G11 15000 Hz),
+které odhalila vysokofrekvenční sondáž kanálu na macu (čistý průchod až
+do ~16 kHz). 11 skupin × 4 bity = **44 bitů/symbol → 2,75 kbit/s** při
+62,5 Bd (2,75× Q-FSK). Amplituda každého tónu je 1/11 nastavené (bez
+klipu). Symbolová hodnota nese 44 bitů, takže celý řetězec (BitBuffer,
+demodulátor, FrameReceiver) pracuje s `uint64_t`. Ověřeno akusticky
+self-loopbackem na macu (BER 0/3072, SNR ≈ 25 dB); horní pásma zatím
+jen na macu — Fedora→Mac klesá nad ~5,5 kHz, takže na dvoustrojovém spoji
+může být W-FSK asymetrická (čeká měření na Fedoře). Pro robustní obousměrný
+provoz zůstává výchozí volbou Q-FSK.
 
 ## Signálový řetězec
 
@@ -149,6 +162,12 @@ stejná místnost):
   při 4× vyšší propustnosti.
 - **DBPSK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 18,5–20 dB.
 - **OOK:** BER **0/3072** přes 3 PRBS rámce, SNR ≈ 21,6–22,3 dB.
+- **Q-FSK:** self-loopback na macu (reproduktor→vzduch→vlastní mikrofon),
+  BER **0/3072** přes 3 PRBS rámce, SNR ≈ 28 dB — dvoustrojová matice
+  Fedora↔Mac čeká.
+- **W-FSK:** self-loopback na macu, BER **0/3072** přes 3 PRBS rámce,
+  SNR ≈ 25 dB při 2,75 kbit/s — horní pásma zatím jen na macu (Fedora→Mac
+  klesá nad ~5,5 kHz), dvoustrojové měření čeká.
 - **IP přes zvuk (`modem_tap`):** obousměrný ping vzduchem, RTT ≈ 13–14 s
   (84 B ICMP @ ~125 bit/s) — viz [`docs/measurements.md`](docs/measurements.md).
 
@@ -161,7 +180,7 @@ Podrobná metodika, kompletní tabulky a forenzní rozbor jedné anomálie
 src/
   core/       konfigurace, bitový proud, WAV I/O, SPSC ring buffer, PRBS-15
   dsp/        chirp, Goertzelův filtr, FIR, simulace kanálu
-  modem/      modulátory/demodulátory (2-FSK, OOK, DBPSK, 16-FSK, Q-FSK) + registr
+  modem/      modulátory/demodulátory (2-FSK, OOK, DBPSK, 16-FSK, Q-FSK, W-FSK) + registr
   protocol/   CRC-16, sestavení rámců (Framer), příjem rámců (FrameReceiver)
   link/       CSMA MAC (AcousticLink) a TUN/TAP zařízení pro modem_tap
   audio/      obálka nad miniaudio (real-time I/O)
@@ -186,7 +205,7 @@ third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 | M6 | Měření BER/FER na reálném kanálu (PRBS) | hotovo — obousměrná matice, BER 0 |
 | M7 | Síťová vrstva (`modem_tap`, CSMA MAC) | hotovo — ping vzduchem, RTT ~13 s |
 | M8 | Závěrečná zpráva ([`docs/zprava.md`](docs/zprava.md)) | hotovo |
-| M9 | Rychlejší modulace (Q-FSK, 4×16-FSK, 1 kbit/s) | implementováno + testy; měření vzduchem čeká |
+| M9 | Rychlejší modulace (Q-FSK 1 kbit/s, W-FSK 2,75 kbit/s) | implementováno + testy; self-loopback BER 0, dvoustrojové měření čeká |
 
 ## Licence a kredity
 
