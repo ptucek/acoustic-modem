@@ -176,6 +176,10 @@ Velikosti ringů jsou dimenzované na celé rámce: `rx_ring_` má `1u << 20`
 vzorků (~22 s při 48 kHz), `tx_ring_` `1u << 22` (~87 s) — rámec se vkládá
 vcelku, ne po kouskách, takže musí mít kam.
 
+Kompletní rozpis vláken ve všech čtyřech aplikacích (`modem_cli`,
+`modem_gui`, `modem_tap`) a všech kritických sekcí — co přesně chrání
+který zámek/atomik a proč — je v [`threads.md`](threads.md).
+
 ## DSP
 
 ### Goertzel místo FFT

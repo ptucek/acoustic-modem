@@ -211,7 +211,7 @@ src/
   net/        modem_tap — síťový mostík
   cli/        modem_cli
 tests/        jednotkové a integrační testy (doctest)
-docs/         protokol, architektura, měření, spolupráce agentů
+docs/         protokol, architektura, vlákna, měření, spolupráce agentů
 sync/         koordinace mezi Linux a Mac agentem přes Dropbox (viz sync/README.md)
 third_party/  doctest, kissfft, Dear ImGui, ImPlot, miniaudio
 ```
